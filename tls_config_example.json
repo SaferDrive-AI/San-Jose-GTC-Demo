@@ -1,0 +1,75 @@
+{
+  "cluster_1984576776_3478559735_3478559736_3537422682_#1more": {
+    "programID": "custom_program",
+    "phases": [
+      {
+        "duration": 35,
+        "state": "rrrrrgGGggrrrrrgGGggGrGr",
+        "minDur": 10,
+        "maxDur": 60,
+        "name": "North-South Direction Green Light"
+      },
+      {
+        "duration": 5,
+        "state": "rrrrrgGGggrrrrrgGGggrrrr",
+        "name": "North-South Direction Green Light Extension"
+      },
+      {
+        "duration": 3,
+        "state": "rrrrryyyggrrrrryyyggrrrr",
+        "name": "North-South Direction Yellow Light"
+      },
+      {
+        "duration": 8,
+        "state": "rrrrrrrrGGrrrrrrrrGGrrrr",
+        "minDur": 5,
+        "maxDur": 50,
+        "name": "Pedestrian Crossing"
+      },
+      {
+        "duration": 3,
+        "state": "rrrrrrrryyrrrrrrrryyrrrr",
+        "name": "Pedestrian Yellow Light"
+      },
+      {
+        "duration": 1,
+        "state": "rrrrrrrrrrrrrrrrrrrrrrrr",
+        "name": "All Red"
+      },
+      {
+        "duration": 35,
+        "state": "gGGggrrrrrgGGggrrrrrrGrG",
+        "minDur": 10,
+        "maxDur": 60,
+        "name": "East-West Direction Green Light"
+      },
+      {
+        "duration": 5,
+        "state": "gGGggrrrrrgGGggrrrrrrrrr",
+        "name": "East-West Direction Green Light Extension"
+      },
+      {
+        "duration": 3,
+        "state": "yyyggrrrrryyyggrrrrrrrrr",
+        "name": "East-West Direction Yellow Light"
+      },
+      {
+        "duration": 8,
+        "state": "rrrGGrrrrrrrrGGrrrrrrrrr",
+        "minDur": 5,
+        "maxDur": 50,
+        "name": "Pedestrian Crossing 2"
+      },
+      {
+        "duration": 3,
+        "state": "rrryyrrrrrrrryyrrrrrrrrr",
+        "name": "Pedestrian Yellow Light 2"
+      },
+      {
+        "duration": 1,
+        "state": "rrrrrrrrrrrrrrrrrrrrrrrr",
+        "name": "All Red 2"
+      }
+    ]
+  }
+}
