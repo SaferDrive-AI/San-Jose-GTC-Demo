@@ -518,7 +518,8 @@ class SUMODelayCalculator:
                 '-c', self.config_file,
                 '--start',  # Auto-start simulation (GUI mode)
                 '--quit-on-end',  # Auto-quit on end
-                '--window-size', '1920,1440'
+                '--window-size', '1920,1440',
+                '--delay', '40'
             ]
 
             traci.start(sumo_cmd)
