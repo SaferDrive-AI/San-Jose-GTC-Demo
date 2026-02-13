@@ -41,7 +41,8 @@ class SUMODelayCalculator:
     """SUMO Delay Calculator - Using TraCI for dynamic control"""
 
     def __init__(self, net_file, route_file, obstacles=None, tls_program=None,
-                 sim_time=3600, step_length=1.0, gui=False, output_file=None, mode='static'):
+                 sim_time=3600, step_length=0.1, gui=False, output_file=None, mode='static',
+                 tripinfo_file=None, statistic_file=None):
         """
         Initialize calculator
 
@@ -54,6 +55,8 @@ class SUMODelayCalculator:
             step_length: Simulation step length (seconds)
             gui: Whether to use GUI mode
             output_file: Output file path
+            tripinfo_file: SUMO tripinfo XML output file path
+            statistic_file: SUMO overall statistic XML output file path
         """
         self.net_file = os.path.abspath(net_file)
         self.route_file = os.path.abspath(route_file)
@@ -64,6 +67,8 @@ class SUMODelayCalculator:
         self.gui = gui
         self.output_file = output_file
         self.mode = mode
+        self.tripinfo_file = tripinfo_file
+        self.statistic_file = statistic_file
 
         self.sumo_binary = 'sumo-gui' if self.gui else 'sumo'
 
@@ -237,6 +242,16 @@ class SUMODelayCalculator:
                     # Change vehicle color to red to indicate obstacle
                     traci.vehicle.setColor(obstacle_veh_id, (255, 0, 0, 255))
 
+                    # Prevent SUMO from removing the vehicle due to route completion
+                    stop_lane_id = f"{edge_id}_{lane_idx}"
+                    traci.vehicle.setStop(
+                        obstacle_veh_id,
+                        edgeID=edge_id,
+                        pos=traci.lane.getLength(stop_lane_id),
+                        laneIndex=lane_idx,
+                        duration=2**31 - 1
+                    )
+
                     # Save obstacle information
                     self.obstacle_vehicles.append({
                         'id': obstacle_veh_id,
@@ -358,9 +373,11 @@ class SUMODelayCalculator:
     def update_tls_program(self):
         """Update TLS programs based on simulation mode and obstacle status.
 
-        - static mode or no obstacles: use default program "org"
+        - bench mode: always use original program "org"
+        - opt mode: always use optimized program "opt"
         - dynamic mode with obstacles: switch to the signal program whose
           program ID matches the obstacle's lane_id
+        - dynamic mode without obstacles: fall back to "org"
         """
         # Only execute the switch once since obstacles are static
         if hasattr(self, '_tls_program_applied'):
@@ -370,20 +387,51 @@ class SUMODelayCalculator:
         # Target TLS ID (can be extended to a list in the future)
         target_tls_id = "cluster_1984576776_3478559735_3478559736_3537422682_#1more"
 
-        # Static mode or no obstacle info -> use default "org"
-        if self.mode == 'static' or not hasattr(self, 'obstacle_info') or not self.obstacle_info:
+        # Bench mode -> always use original "org"
+        if self.mode == 'bench':
             try:
                 traci.trafficlight.setProgram(target_tls_id, "org")
-                print(f"\n  TLS {target_tls_id}: using default program 'org'")
+                print(f"\n  TLS {target_tls_id}: using original program 'org' (bench mode)")
+            except Exception as e:
+                print(f"\n  TLS {target_tls_id}: failed to set program - {e}")
+            return
+
+        # Opt mode -> always use optimized "opt"
+        if self.mode == 'opt':
+            try:
+                traci.trafficlight.setProgram(target_tls_id, "opt")
+                print(f"\n  TLS {target_tls_id}: using optimized program 'opt' (opt mode)")
+            except Exception as e:
+                print(f"\n  TLS {target_tls_id}: failed to set program - {e}")
+            return
+
+        # Dynamic mode: if no obstacle info, fall back to "org"
+        if not hasattr(self, 'obstacle_info') or not self.obstacle_info:
+            try:
+                traci.trafficlight.setProgram(target_tls_id, "org")
+                print(f"\n  TLS {target_tls_id}: no obstacles, using default program 'org'")
             except Exception as e:
                 print(f"\n  TLS {target_tls_id}: failed to set default program - {e}")
             return
 
-        # Dynamic mode: collect obstacle lane IDs from obstacle_info
+        # Dynamic mode with obstacles: collect obstacle edge and lane info
         obstacle_lane_ids = []
+        obstacle_edges = []
         for obs in self.obstacle_info:
             lane_id = f"{obs['edge']}_{obs['lane']}"
             obstacle_lane_ids.append(lane_id)
+            obstacle_edges.append(obs['edge'])
+        print(f"\n  [Dynamic] Obstacle edge(s): {obstacle_edges}")
+        print(f"  [Dynamic] Obstacle lane ID(s): {obstacle_lane_ids}")
+
+        # Get all available program IDs for this TLS
+        try:
+            all_logics = traci.trafficlight.getAllProgramLogics(target_tls_id)
+            available_programs = [logic.programID for logic in all_logics]
+            print(f"  [Dynamic] Available TLS programs: {available_programs}")
+        except Exception as e:
+            print(f"  [Dynamic] Failed to get TLS programs: {e}")
+            return
 
         # Check if any obstacle lane is controlled by the target TLS
         try:
@@ -395,13 +443,35 @@ class SUMODelayCalculator:
                     break
 
             if matched_lane:
-                traci.trafficlight.setProgram(target_tls_id, matched_lane)
-                print(f"\n  TLS {target_tls_id}: switched to program '{matched_lane}'")
+                print(f"  [Dynamic] Obstacle lane '{matched_lane}' is controlled by TLS")
+
+                # Use the lane_id as program ID if it exists
+                if matched_lane in available_programs:
+                    traci.trafficlight.setProgram(target_tls_id, matched_lane)
+                    print(f"  TLS: switched to lane-specific program '{matched_lane}'")
+                else:
+                    # Fallback: find a program matching the obstacle's edge
+                    obs_edge = obstacle_edges[0]
+                    edge_program = None
+                    for prog_id in available_programs:
+                        if prog_id.startswith(obs_edge + "_"):
+                            edge_program = prog_id
+                            break
+                    if edge_program:
+                        traci.trafficlight.setProgram(target_tls_id, edge_program)
+                        print(f"  TLS: exact lane program not found, "
+                              f"using edge-based program '{edge_program}'")
+                    else:
+                        traci.trafficlight.setProgram(target_tls_id, "opt")
+                        print(f"  TLS: no lane-specific program for '{matched_lane}', "
+                              f"falling back to 'opt'")
             else:
                 traci.trafficlight.setProgram(target_tls_id, "org")
-                print(f"\n  TLS {target_tls_id}: no obstacle on controlled lanes, using default 'org'")
+                print(f"  TLS: no obstacle on controlled lanes, using default 'org'")
         except Exception as e:
             print(f"\n  TLS {target_tls_id}: failed to switch program - {e}")
+            import traceback
+            traceback.print_exc()
 
     def set_tls_program_via_traci(self):
         """Set traffic light program via TraCI"""
@@ -479,6 +549,10 @@ class SUMODelayCalculator:
         vehicle_ids = traci.vehicle.getIDList()
 
         for veh_id in vehicle_ids:
+            # Skip obstacle vehicles
+            if veh_id.startswith('obstacle_veh_'):
+                continue
+
             if veh_id not in self.vehicle_data:
                 self.vehicle_data[veh_id] = {
                     'depart_time': step,
@@ -518,9 +592,17 @@ class SUMODelayCalculator:
                 '-c', self.config_file,
                 '--start',  # Auto-start simulation (GUI mode)
                 '--quit-on-end',  # Auto-quit on end
+                '--time-to-teleport', '-1',  # Disable teleportation so obstacles stay forever
+                '--end', str(self.sim_time),  # Explicit end time
+                '--step-length', str(self.step_length),  # Override config to match Python loop
                 '--window-size', '1920,1440',
                 '--delay', '40'
             ]
+
+            if self.tripinfo_file:
+                sumo_cmd += ['--tripinfo-output', os.path.abspath(self.tripinfo_file)]
+            if self.statistic_file:
+                sumo_cmd += ['--statistic-output', os.path.abspath(self.statistic_file)]
 
             traci.start(sumo_cmd)
             print("✓ SUMO started\n")
@@ -852,16 +934,22 @@ TLS Program JSON format example:
                             '(lat/lon required, width/height/angle optional, angle auto-follows lane if not provided)')
     parser.add_argument('--tls-program', default=None,
                        help='Custom traffic light program (JSON file path or JSON string)')
-    parser.add_argument('--sim-time', type=int, default=3600,
+    parser.add_argument('--sim-time', type=int, default=1800,
                        help='Simulation duration (seconds), default 3600')
-    parser.add_argument('--step-length', type=float, default=1.0,
+    parser.add_argument('--step-length', type=float, default=0.1,
                        help='Simulation step length (seconds), default 1.0')
     parser.add_argument('--gui', action='store_true', default=True,
                        help='Run in GUI mode')
-    parser.add_argument('--mode', choices=['static', 'dynamic'], default='dynamic',
-                       help='Simulation mode: static (default TLS) or dynamic (obstacle-aware TLS switching)')
+    parser.add_argument('--no-gui', dest='gui', action='store_false',
+                       help='Run in headless mode (no GUI)')
+    parser.add_argument('--mode', choices=['bench', 'opt', 'dynamic'], default='dynamic',
+                       help='Simulation mode: bench (original TLS "org"), opt (optimized TLS "opt"), or dynamic (obstacle-aware TLS switching)')
     parser.add_argument('--output', default=output,
                        help='Output JSON file path')
+    parser.add_argument('--tripinfo-output', default=None,
+                       help='SUMO tripinfo XML output file path')
+    parser.add_argument('--statistic-output', default=None,
+                       help='SUMO overall statistic XML output file path')
 
     args = parser.parse_args()
 
@@ -890,7 +978,9 @@ TLS Program JSON format example:
         step_length=args.step_length,
         gui=args.gui,
         output_file=args.output,
-        mode=args.mode
+        mode=args.mode,
+        tripinfo_file=args.tripinfo_output,
+        statistic_file=args.statistic_output
     )
 
     results = calculator.run()

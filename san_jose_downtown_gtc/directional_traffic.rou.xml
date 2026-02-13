@@ -1,20 +1,14 @@
 <?xml version="1.0" ?>
 <routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
-    <route id="r_0" edges="-417034218#1 -28463687#0 -417034180 -416901230#1 416901209#1 416901209#2 157782193#0 157782193#1 157782193#2"/>
+    <route id="r_0" edges="-360446682#0 -417034142 -417034212#1 -417034224#0 -417034207  -417034218#1 -28463687#0 -417034180 -416901230#1 416901209#1 416901209#2 157782193#0 157782193#1 157782193#2"/>
     
     
-    <route id="r_1" edges="-417034218#1 -28463687#0 -417034180 -416901230#1 -1418903639#0 -157782383 -517627277 -416901218#1"/>
-    
-    
-    <route id="r_10" edges="-157782193#0 -416901209#2 -416901209#1 417034082#1 417034071 417034088#0"/>
-    
-    
-    <route id="r_11" edges="-157782193#0 -416901209#2 -416901209#1 416901230#1 417034180 28463687#0 417034218#1"/>
-    
-    
-    <route id="r_2" edges="-417034218#1 -28463687#0 -417034180 -416901230#1 417034082#1 417034071 417034088#0"/>
-    
-    
+    <route id="r_1" edges="-360446682#0 -417034142 -417034212#1 -417034224#0 -417034207 -417034218#1 -28463687#0 -417034180 -416901230#1 -1418903639#0 -157782383 -517627277 -416901218#1"/>
+
+
+    <route id="r_2" edges="-360446682#0 -417034142 -417034212#1 -417034224#0 -417034207  -417034218#1 -28463687#0 -417034180 -416901230#1 417034082#1 417034071 417034088#0"/>
+
+
     <route id="r_3" edges="-417034088#0 -417034071 -417034082#1 416901230#1 417034180 28463687#0 417034218#1"/>
     
     
@@ -24,16 +18,23 @@
     <route id="r_5" edges="-417034088#0 -417034071 -417034082#1 -1418903639#0 -157782383 -517627277 -416901218#1"/>
     
     
-    <route id="r_6" edges="416901218#1 517627277 157782383 1418903639#0 417034082#1 417034071 417034088#0"/>
+    <route id="r_6" edges="-157781953#2 416901218#1 517627277 157782383 1418903639#0 417034082#1 417034071 417034088#0"/>
     
     
-    <route id="r_7" edges="416901218#1 517627277 157782383 1418903639#0 416901230#1 417034180 28463687#0 417034218#1"/>
+    <route id="r_7" edges="-157781953#2 416901218#1 517627277 157782383 1418903639#0 416901230#1 417034180 28463687#0 417034218#1"/>
     
     
-    <route id="r_8" edges="416901218#1 517627277 157782383 1418903639#0 416901209#1 416901209#2 157782193#0 157782193#1 157782193#2"/>
+    <route id="r_8" edges="-157781953#2 416901218#1 517627277 157782383 1418903639#0 416901209#1 416901209#2 157782193#0 157782193#1 157782193#2"/>
     
     
     <route id="r_9" edges="-157782193#2 -157782193#1 -157782193#0 -416901209#2 -416901209#1 -1418903639#0 -157782383 -517627277 -416901218#1"/>
+
+
+    <route id="r_10" edges="-157782193#0 -416901209#2 -416901209#1 417034082#1 417034071 417034088#0"/>
+
+
+    <route id="r_11" edges="-157782193#0 -416901209#2 -416901209#1 416901230#1 417034180 28463687#0 417034218#1"/>
+
     
 
     <!-- <vType id="passenger" vClass="passenger" speedFactor="1.0" speedDev="0.1"
@@ -59,15 +60,16 @@
     <!--  Vehicle type distribution  -->
     <vTypeDistribution id="realistic_traffic_mix" vTypes="car_conservative car_normal car_aggressive suv_conservative suv_normal suv_aggressive pickup_conservative pickup_normal pickup_aggressive truck_delivery semi_truck bus_transit bus_school motorcycle_normal" probabilities="0.15 0.20 0.10 0.10 0.13 0.07 0.04 0.06 0.02 0.03 0.02 0.03 0.02 0.03"/>
 
-    <flow id="flow_ew_east_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="50" route="r_0" departLane="best"/>
-    <flow id="flow_ew_east_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="200" route="r_1" departLane="best"/>
-    <flow id="flow_ew_east_right" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="50" route="r_2" departLane="best"/>
-    <flow id="flow_ew_west_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="25" route="r_6" departLane="best"/>
-    <flow id="flow_ew_west_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="200.00" route="r_7" departLane="best"/>
-    <flow id="flow_ew_west_right" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="25" route="r_8" departLane="best"/>
-    <flow id="flow_ns_north_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="3.00" route="r_3" departLane="best"/>
-    <flow id="flow_ns_north_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="9.00" route="r_4" departLane="best"/>
-    <flow id="flow_ns_north_right" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="3.00" route="r_5" departLane="best"/>
-    <flow id="flow_ns_south_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="3.00" route="r_9" departLane="best"/>
-    <flow id="flow_ns_south_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="9.00" route="r_10" departLane="best"/>
+    <flow id="flow_ew_east_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="150" route="r_0" departLane="best"/>
+    <flow id="flow_ew_east_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="1050" route="r_1" departLane="best"/>
+    <flow id="flow_ew_east_right" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="180" route="r_2" departLane="best"/>
+    <flow id="flow_ew_west_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="80" route="r_6" departLane="best"/>
+    <flow id="flow_ew_west_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="1050.00" route="r_7" departLane="best"/>
+    <flow id="flow_ew_west_right" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="190" route="r_8" departLane="best"/>
+    <flow id="flow_ns_north_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="27" route="r_3" departLane="best"/>
+    <flow id="flow_ns_north_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="100" route="r_4" departLane="best"/>
+    <flow id="flow_ns_north_right" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="35" route="r_5" departLane="best"/>
+    <flow id="flow_ns_south_left" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="17" route="r_9" departLane="best"/>
+    <flow id="flow_ns_south_straight" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="90" route="r_10" departLane="best"/>
+    <flow id="flow_ns_south_right" type="realistic_traffic_mix" begin="0" end="1800" vehsPerHour="25" route="r_11" departLane="best"/>
 </routes>

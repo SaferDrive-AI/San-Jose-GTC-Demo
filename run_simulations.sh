@@ -9,7 +9,7 @@ PYTHON="/home/yilinwang/miniconda3/envs/terasimYW/bin/python"
 SCRIPT="main.py"
 NET_FILE="san_jose_downtown_gtc/osm.net.xml"
 ROUTE_FILE="san_jose_downtown_gtc/directional_traffic.rou.xml"
-SIM_TIME=3600
+SIM_TIME=1800
 OUTPUT_DIR="traffic_data_analysis/delay_result"
 
 mkdir -p "$OUTPUT_DIR"

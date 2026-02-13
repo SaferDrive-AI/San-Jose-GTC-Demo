@@ -1,0 +1,21 @@
+{
+    "camera_name": "Inter_Cam_1_Night_Event ",
+    "direction": "NW",
+    "speed": 3.6339,
+    "city_name": "San Jose",
+    "intersection_name": "S Market St & W Santa Clara St",
+    "object": {
+        "id": "13450",
+        "name": "vehicle",
+        "bbox": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+        ],
+        "speed": 0.0,
+        "dir": [],
+        "orientation": null,
+        "coordinates": null
+    }
+}
