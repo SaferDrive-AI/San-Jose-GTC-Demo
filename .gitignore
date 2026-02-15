@@ -18,3 +18,4 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+traffic_data_analysis/delay_result/ *.xml

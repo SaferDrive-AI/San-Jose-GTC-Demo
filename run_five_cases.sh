@@ -1,9 +1,9 @@
 #!/bin/bash
-# Run 4 SUMO simulations (EB_thr obstacle only):
+# Run 4 SUMO simulations (SB_thr obstacle):
 #   Case 1: Benchmark — no obstacle, bench mode (original TLS "org")
-#   Case 2: Optimized — no obstacle, opt mode (optimized TLS "opt")
-#   Case 3: Optimized + obstacle — EB_thr obstacle, opt mode
-#   Case 4: Dynamic + obstacle — EB_thr obstacle, dynamic mode
+#   Case 2: Benchmark + SB_thr obstacle (bench mode - original TLS)
+#   Case 3: Optimized (Static) + SB_thr obstacle (opt mode)
+#   Case 4: Optimized (Dynamic) + SB_thr obstacle (dynamic mode)
 #
 # Usage: bash run_five_cases.sh
 
@@ -17,7 +17,7 @@ OUTPUT_DIR="traffic_data_analysis/delay_result"
 mkdir -p "$OUTPUT_DIR"
 
 # Obstacle GPS coordinates
-EB_THR="37.335358,-121.892226"
+SB_THR="37.335594,-121.892218"
 
 TOTAL=4
 RUN=0
@@ -40,7 +40,7 @@ run_case() {
         --output "$OUTPUT_DIR/delay_${tag}.json" \
         --tripinfo-output "$OUTPUT_DIR/tripinfo_${tag}.xml" \
         --statistic-output "$OUTPUT_DIR/statistic_${tag}.xml" \
-        --gui
+        --no-gui
 
     echo "  [DONE] $name"
     echo "         delay:     $OUTPUT_DIR/delay_${tag}.json"
@@ -51,17 +51,14 @@ run_case() {
 # Case 1: Benchmark (no obstacle, bench mode — original TLS)
 run_case "Benchmark (no obstacle, original TLS)" "" "bench" "benchmark"
 
-# Case 2: Benchmark + EB_thr obstacle (bench mode - original TLS)
-run_case "EB_thr obstacle, optimized TLS" "$EB_THR" "bench" "bench_EB_thr_obstacle"
+# Case 2: Benchmark + SB_thr obstacle (bench mode - original TLS)
+run_case "SB_thr obstacle, original TLS" "$SB_THR" "bench" "bench_SB_thr_obstacle"
 
-# Case 3: Optimized + EB_thr obstacle (opt mode — optimized TLS)
-run_case "Optimized (no obstacle, optimized TLS)" "$EB_THR" "opt" "opt_EB_thr_obstacle"
+# Case 3: Optimized (Static) + SB_thr obstacle (opt mode)
+run_case "SB_thr obstacle, optimized TLS" "$SB_THR" "opt" "opt_SB_thr_obstacle"
 
-## Case 3: Optimized + EB_thr obstacle (opt mode)
-#run_case "EB_thr obstacle, optimized TLS" "$EB_THR" "opt" "opt_EB_thr"
-
-# Case 4: Dynamic + EB_thr obstacle (dynamic mode - dynamic TLS)
-run_case "EB_thr obstacle, dynamic TLS" "$EB_THR" "dynamic" "dynamic_EB_thr_obstacle"
+# Case 4: Optimized (Dynamic) + SB_thr obstacle (dynamic mode)
+run_case "SB_thr obstacle, dynamic TLS" "$SB_THR" "dynamic" "dynamic_SB_thr_obstacle"
 
 echo ""
 echo "============================================================"

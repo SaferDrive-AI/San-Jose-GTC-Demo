@@ -16,15 +16,15 @@
     "step_length": 0.1
   },
   "results": {
-    "average_delay": 24.767688266199666,
-    "average_time_loss": 24.767688266199666,
-    "average_wait_time": 24.767688266199666,
-    "average_duration": 114.284938704028,
-    "vehicle_count": 1142,
-    "total_time_loss": 28284.70000000002,
-    "total_wait_time": 28284.70000000002,
+    "average_delay": 33.35460992907801,
+    "average_time_loss": 33.35460992907801,
+    "average_wait_time": 33.35460992907801,
+    "average_duration": 98.68439716312055,
+    "vehicle_count": 705,
+    "total_time_loss": 23514.999999999996,
+    "total_wait_time": 23514.999999999996,
     "simulation_time": 1800,
-    "total_departed": 1247,
-    "total_arrived": 1142
+    "total_departed": 768,
+    "total_arrived": 705
   }
 }
