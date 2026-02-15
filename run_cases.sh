@@ -33,7 +33,7 @@ SB_THR="37.335594,-121.892218"
 # SB_RIGHT="37.335578, -121.892244"
 
 
-TOTAL=4
+TOTAL=5
 RUN=0
 
 run_case() {
@@ -52,9 +52,10 @@ run_case() {
         --obstacles "$obstacles" \
         --mode "$mode" \
         --output "$OUTPUT_DIR/delay_${tag}.json" \
-        --tripinfo-output "$OUTPUT_DIR/tripinfo_${tag}.xml" \
-        --statistic-output "$OUTPUT_DIR/statistic_${tag}.xml" \
         --no-gui
+        # --tripinfo-output "$OUTPUT_DIR/tripinfo_${tag}.xml" \
+        # --statistic-output "$OUTPUT_DIR/statistic_${tag}.xml" \
+        # --no-gui
 
     echo "  [DONE] $name"
     echo "         delay:     $OUTPUT_DIR/delay_${tag}.json"
@@ -68,10 +69,13 @@ run_case "Benchmark (no obstacle, original TLS)" "" "bench" "benchmark"
 # Case 2: Benchmark + SB_thr obstacle (bench mode - original TLS)
 run_case "SB_thr obstacle, original TLS" "$SB_THR" "bench" "bench_SB_thr_obstacle"
 
-# Case 3: Optimized (Static) + SB_thr obstacle (opt mode)
+# Case 3: Optimized (Static) + no obstacle  (opt mode)
+run_case "Optimized (Static) + no obstacle" "" "opt" "opt_SB_thr_no_obstacle"
+
+# Case 4: Optimized (Static) + SB_thr obstacle (opt mode)
 run_case "SB_thr obstacle, optimized TLS" "$SB_THR" "opt" "opt_SB_thr_obstacle"
 
-# Case 4: Optimized (Dynamic) + SB_thr obstacle (dynamic mode)
+# Case 5: Optimized (Dynamic) + SB_thr obstacle (dynamic mode)
 run_case "SB_thr obstacle, dynamic TLS" "$SB_THR" "dynamic" "dynamic_SB_thr_obstacle"
 
 echo ""
