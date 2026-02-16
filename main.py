@@ -225,7 +225,7 @@ class SUMODelayCalculator:
                     traci.vehicle.moveToXY(
                         vehID=obstacle_veh_id,
                         edgeID=edge_id,
-                        lane=lane_idx,
+                        laneIndex=lane_idx,
                         x=x,
                         y=y,
                         angle=angle,
@@ -322,7 +322,7 @@ class SUMODelayCalculator:
                     traci.vehicle.moveToXY(
                         vehID=obs['id'],
                         edgeID=obs['edge'],
-                        lane=obs['lane'],
+                        laneIndex=obs['lane'],
                         x=obs['x'],
                         y=obs['y'],
                         angle=obs['angle'],
@@ -369,6 +369,120 @@ class SUMODelayCalculator:
         if self.reroute_count > 0 and step % 100 == 0:
             print(f"\n  Triggered {self.reroute_count} reroutes")
 
+    def assist_stuck_vehicles(self, current_time):
+        """Progressively help vehicles stuck behind obstacles to change lanes.
+
+        Uses SUMO's sublane model parameters (lcPushy, lcAssertive, lcImpatience)
+        to make stuck vehicles increasingly aggressive about lane changing.
+        After 100s of waiting, forces a lane change by overriding safety checks.
+        """
+        if not hasattr(self, 'obstacle_vehicles') or not self.obstacle_vehicles:
+            return
+
+        if not hasattr(self, '_stuck_timers'):
+            self._stuck_timers = {}       # veh_id -> first_stuck_time
+            self._lc_force_count = 0
+
+        # Build a lookup: lane_id -> [(obstacle_lane_position, obs_info), ...]
+        obstacle_lanes = {}
+        veh_id_list = traci.vehicle.getIDList()
+        for obs in self.obstacle_vehicles:
+            if obs['id'] not in veh_id_list:
+                continue
+            lane_id = f"{obs['edge']}_{obs['lane']}"
+            try:
+                obs_pos = traci.vehicle.getLanePosition(obs['id'])
+            except Exception:
+                continue
+            obstacle_lanes.setdefault(lane_id, []).append((obs_pos, obs))
+
+        if not obstacle_lanes:
+            return
+
+        currently_stuck = set()
+
+        for veh_id in veh_id_list:
+            if veh_id.startswith('obstacle_veh_'):
+                continue
+
+            try:
+                lane_id = traci.vehicle.getLaneID(veh_id)
+                if lane_id not in obstacle_lanes:
+                    continue
+
+                veh_pos = traci.vehicle.getLanePosition(veh_id)
+                speed = traci.vehicle.getSpeed(veh_id)
+
+                # Check if vehicle is behind an obstacle and nearly stopped
+                for obs_pos, obs_info in obstacle_lanes[lane_id]:
+                    distance = obs_pos - veh_pos
+                    if 0 < distance < 30 and speed < 1.0:
+                        currently_stuck.add(veh_id)
+
+                        if veh_id not in self._stuck_timers:
+                            self._stuck_timers[veh_id] = current_time
+
+                        wait = current_time - self._stuck_timers[veh_id]
+
+                        if wait > 100:
+                            # === Force lane change: override all safety ===
+                            traci.vehicle.setLaneChangeMode(veh_id, 0)
+                            cur_lane = traci.vehicle.getLaneIndex(veh_id)
+                            edge_id = traci.vehicle.getRoadID(veh_id)
+                            n_lanes = traci.edge.getLaneNumber(edge_id)
+                            target = cur_lane + 1 if cur_lane + 1 < n_lanes else cur_lane - 1
+                            if 0 <= target < n_lanes:
+                                traci.vehicle.changeLane(veh_id, target, 15.0)
+                            self._lc_force_count += 1
+                        elif wait > 60:
+                            # Very aggressive: high pushy + assertive
+                            traci.vehicle.setParameter(veh_id, "laneChangeModel.lcPushy", "1.0")
+                            traci.vehicle.setParameter(veh_id, "laneChangeModel.lcAssertive", "5.0")
+                            traci.vehicle.setParameter(veh_id, "laneChangeModel.lcImpatience", "1.0")
+                        elif wait > 30:
+                            # Moderately aggressive
+                            traci.vehicle.setParameter(veh_id, "laneChangeModel.lcPushy", "0.5")
+                            traci.vehicle.setParameter(veh_id, "laneChangeModel.lcAssertive", "3.0")
+                            traci.vehicle.setParameter(veh_id, "laneChangeModel.lcImpatience", "0.5")
+                        break  # only match first obstacle on this lane
+            except Exception:
+                pass
+
+        # Reset vehicles that are no longer stuck
+        for veh_id in list(self._stuck_timers):
+            if veh_id not in currently_stuck:
+                try:
+                    if veh_id in veh_id_list:
+                        # Restore default lane change behavior
+                        traci.vehicle.setLaneChangeMode(veh_id, 1621)
+                        traci.vehicle.setParameter(veh_id, "laneChangeModel.lcPushy", "0")
+                        traci.vehicle.setParameter(veh_id, "laneChangeModel.lcAssertive", "1")
+                        traci.vehicle.setParameter(veh_id, "laneChangeModel.lcImpatience", "0")
+                except Exception:
+                    pass
+                del self._stuck_timers[veh_id]
+
+    def remove_stuck_vehicles(self, current_time, threshold=180):
+        """Remove non-obstacle vehicles that have been waiting consecutively for too long.
+
+        Args:
+            current_time: Current simulation time in seconds.
+            threshold: Consecutive waiting time (seconds) before removal. Default 180s.
+        """
+        if not hasattr(self, '_remove_count'):
+            self._remove_count = 0
+
+        vehicle_ids = traci.vehicle.getIDList()
+        for veh_id in vehicle_ids:
+            if veh_id.startswith('obstacle_veh_'):
+                continue
+            try:
+                waiting_time = traci.vehicle.getWaitingTime(veh_id)
+                if waiting_time >= threshold:
+                    traci.vehicle.remove(veh_id, reason=2)  # 2 = REMOVE_TELEPORT
+                    self._remove_count += 1
+            except Exception:
+                pass
 
     def update_tls_program(self):
         """Update TLS programs based on simulation mode and obstacle status.
@@ -636,6 +750,12 @@ class SUMODelayCalculator:
 
                 # Proactively trigger rerouting for congested vehicles
                 self.trigger_rerouting(step)
+
+                # Help vehicles stuck behind obstacles change lanes
+                self.assist_stuck_vehicles(step * self.step_length)
+
+                # Remove non-obstacle vehicles stuck for too long
+                self.remove_stuck_vehicles(step * self.step_length)
 
                 # Collect vehicle data
                 self.collect_vehicle_data(step * self.step_length)

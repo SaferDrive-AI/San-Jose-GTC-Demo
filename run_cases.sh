@@ -17,10 +17,10 @@ OUTPUT_DIR="traffic_data_analysis/delay_result"
 mkdir -p "$OUTPUT_DIR"
 
 # Obstacle GPS coordinates
-SB_THR="37.335594,-121.892218"
+OBS_POS="37.335353, -121.892234"
 
 # EB_LEFT="37.335379, -121.892249"
-# EB_THR="37.335358, -121.892226"
+# EB_THR="37.335358, -121.892248"
 # EB_RIGHT="37.335338, -121.892208"
 # WB_LEFT="37.335558, -121.891889"
 # WB_THR="37.335577, -121.891913"
@@ -52,7 +52,7 @@ run_case() {
         --obstacles "$obstacles" \
         --mode "$mode" \
         --output "$OUTPUT_DIR/delay_${tag}.json" \
-        --no-gui
+        --gui
         # --tripinfo-output "$OUTPUT_DIR/tripinfo_${tag}.xml" \
         # --statistic-output "$OUTPUT_DIR/statistic_${tag}.xml" \
         # --no-gui
@@ -67,16 +67,16 @@ run_case() {
 run_case "Benchmark (no obstacle, original TLS)" "" "bench" "benchmark"
 
 # Case 2: Benchmark + SB_thr obstacle (bench mode - original TLS)
-run_case "SB_thr obstacle, original TLS" "$SB_THR" "bench" "bench_SB_thr_obstacle"
+run_case "SB_thr obstacle, original TLS" "$OBS_POS" "bench" "bench_SB_thr_obstacle"
 
 # Case 3: Optimized (Static) + no obstacle  (opt mode)
 run_case "Optimized (Static) + no obstacle" "" "opt" "opt_SB_thr_no_obstacle"
 
 # Case 4: Optimized (Static) + SB_thr obstacle (opt mode)
-run_case "SB_thr obstacle, optimized TLS" "$SB_THR" "opt" "opt_SB_thr_obstacle"
+run_case "SB_thr obstacle, optimized TLS" "$OBS_POS" "opt" "opt_SB_thr_obstacle"
 
 # Case 5: Optimized (Dynamic) + SB_thr obstacle (dynamic mode)
-run_case "SB_thr obstacle, dynamic TLS" "$SB_THR" "dynamic" "dynamic_SB_thr_obstacle"
+run_case "SB_thr obstacle, dynamic TLS" "$OBS_POS" "dynamic" "dynamic_SB_thr_obstacle"
 
 echo ""
 echo "============================================================"
