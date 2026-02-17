@@ -21,7 +21,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def main():
     parser = argparse.ArgumentParser(description="Plot 5-case delay comparison")
-    parser.add_argument("--direction", default="SB_thr",
+    parser.add_argument("--direction", default="WB_thr",
                         help="Obstacle direction tag, e.g. EB_thr, WB_thr, SB_thr, NB_thr")
     parser.add_argument("--output-dir", default=None,
                         help="Directory containing the delay JSON files")

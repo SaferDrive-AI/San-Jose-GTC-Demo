@@ -4,8 +4,8 @@
     "route_file": "/home/yilinwang/San Jose GTC Demo/san_jose_downtown_gtc/directional_traffic.rou.xml",
     "obstacles": [
       {
-        "x": 37.335594,
-        "y": -121.892218,
+        "x": 37.335577,
+        "y": -121.891913,
         "width": 0,
         "height": 0,
         "angle": null
@@ -16,15 +16,15 @@
     "step_length": 0.1
   },
   "results": {
-    "average_delay": 33.561597542242744,
-    "average_time_loss": 33.561597542242744,
-    "average_wait_time": 33.561597542242744,
-    "average_duration": 118.1698924731184,
-    "vehicle_count": 651,
-    "total_time_loss": 21848.600000000024,
-    "total_wait_time": 21848.600000000024,
+    "average_delay": 30.83939774153072,
+    "average_time_loss": 30.83939774153072,
+    "average_wait_time": 30.83939774153072,
+    "average_duration": 83.86298619824336,
+    "vehicle_count": 797,
+    "total_time_loss": 24578.999999999985,
+    "total_wait_time": 24578.999999999985,
     "simulation_time": 1800,
-    "total_departed": 701,
-    "total_arrived": 651
+    "total_departed": 829,
+    "total_arrived": 797
   }
 }
