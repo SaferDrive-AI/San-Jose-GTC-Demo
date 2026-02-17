@@ -33,11 +33,11 @@ def main():
 
     # --- Load data (5 cases) ---
     cases = {
-        "Benchmark\n(no obstacle)":              f"{out_dir}/delay_benchmark.json",
-        "Benchmark\n(Obstacle)":                 f"{out_dir}/delay_bench_{d}_obstacle.json",
-        "Optimized (Static)\n(no obstacle)":     f"{out_dir}/delay_opt_{d}_no_obstacle.json",
-        "Optimized (Static)\nObstacle":          f"{out_dir}/delay_opt_{d}_obstacle.json",
-        "Optimized (Dynamic)\nObstacle":         f"{out_dir}/delay_dynamic_{d}_obstacle.json",
+        "Default Plan\n No Stalled Veh":          f"{out_dir}/delay_benchmark.json",
+        "Default Plan\n Stalled Veh":             f"{out_dir}/delay_bench_{d}_obstacle.json",
+        "Overall-opt Plan\n No Stalled Veh":              f"{out_dir}/delay_opt_{d}_no_obstacle.json",
+        "Overall-opt Plan\n Stalled Veh":                 f"{out_dir}/delay_opt_{d}_obstacle.json",
+        "lane specific Plan\n Stalled Veh":        f"{out_dir}/delay_dynamic_{d}_obstacle.json",
     }
 
     labels = list(cases.keys())
@@ -52,7 +52,9 @@ def main():
 
     # --- Plot ---
     fig, ax1 = plt.subplots(figsize=(14, 6))
-    fig.suptitle(f"{d} Obstacle: 5-Case Comparison", fontsize=18, fontweight="bold")
+    # Convert direction tag to readable name (e.g. "SB_thr" -> "SB Thr")
+    dir_name = d.replace("_", " ").title()
+    fig.suptitle(f"{dir_name} Stalled Vehicle: Mobility Evaluation", fontsize=18, fontweight="bold")
 
     x = np.arange(len(labels))
     bar_width = 0.30

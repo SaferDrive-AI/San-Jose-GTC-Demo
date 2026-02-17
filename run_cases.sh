@@ -17,7 +17,7 @@ OUTPUT_DIR="traffic_data_analysis/delay_result"
 mkdir -p "$OUTPUT_DIR"
 
 # Obstacle GPS coordinates
-OBS_POS="37.335353, -121.892234"
+OBS_POS="37.335577, -121.891913"
 
 # EB_LEFT="37.335379, -121.892249"
 # EB_THR="37.335358, -121.892248"
@@ -52,7 +52,7 @@ run_case() {
         --obstacles "$obstacles" \
         --mode "$mode" \
         --output "$OUTPUT_DIR/delay_${tag}.json" \
-        --gui
+        --no-gui
         # --tripinfo-output "$OUTPUT_DIR/tripinfo_${tag}.xml" \
         # --statistic-output "$OUTPUT_DIR/statistic_${tag}.xml" \
         # --no-gui
@@ -67,18 +67,31 @@ run_case() {
 run_case "Benchmark (no obstacle, original TLS)" "" "bench" "benchmark"
 
 # Case 2: Benchmark + SB_thr obstacle (bench mode - original TLS)
-run_case "SB_thr obstacle, original TLS" "$OBS_POS" "bench" "bench_SB_thr_obstacle"
+run_case "SB_thr obstacle, original TLS" "$OBS_POS" "bench" "bench_WB_thr_obstacle"
 
 # Case 3: Optimized (Static) + no obstacle  (opt mode)
-run_case "Optimized (Static) + no obstacle" "" "opt" "opt_SB_thr_no_obstacle"
+run_case "Optimized (Static) + no obstacle" "" "opt" "opt_WB_thr_no_obstacle"
 
 # Case 4: Optimized (Static) + SB_thr obstacle (opt mode)
-run_case "SB_thr obstacle, optimized TLS" "$OBS_POS" "opt" "opt_SB_thr_obstacle"
+run_case "SB_thr obstacle, optimized TLS" "$OBS_POS" "opt" "opt_WB_thr_obstacle"
 
 # Case 5: Optimized (Dynamic) + SB_thr obstacle (dynamic mode)
-run_case "SB_thr obstacle, dynamic TLS" "$OBS_POS" "dynamic" "dynamic_SB_thr_obstacle"
+run_case "SB_thr obstacle, dynamic TLS" "$OBS_POS" "dynamic" "dynamic_WB_thr_obstacle"
 
 echo ""
 echo "============================================================"
 echo "  All $TOTAL cases completed"
 echo "============================================================"
+
+# --- Plot comparison figure ---
+# Extract direction tag from the output filenames (e.g. "WB_thr")
+DIR_TAG=$(ls "$OUTPUT_DIR"/delay_dynamic_*_obstacle.json 2>/dev/null | head -1 | sed 's/.*delay_dynamic_\(.*\)_obstacle\.json/\1/')
+if [ -n "$DIR_TAG" ]; then
+    echo ""
+    echo "============================================================"
+    echo "  Plotting comparison figure (direction: $DIR_TAG)"
+    echo "============================================================"
+    $PYTHON traffic_data_analysis/plot_delay_comparison.py --direction "$DIR_TAG"
+else
+    echo "  WARNING: Could not determine direction tag, skipping plot"
+fi
