@@ -369,12 +369,62 @@ class SUMODelayCalculator:
         if self.reroute_count > 0 and step % 100 == 0:
             print(f"\n  Triggered {self.reroute_count} reroutes")
 
+    def _get_through_lanes(self, edge_id):
+        """Get lane indices that have through-movement (straight) connections.
+
+        Uses traci.lane.getLinks() to check each lane's outgoing connections.
+        A lane is considered a through lane if any of its connections have
+        direction 's' (straight).
+
+        Returns:
+            List of lane indices with straight connections, cached per edge.
+        """
+        if not hasattr(self, '_through_lanes_cache'):
+            self._through_lanes_cache = {}
+
+        if edge_id in self._through_lanes_cache:
+            return self._through_lanes_cache[edge_id]
+
+        through_lanes = []
+        n_lanes = traci.edge.getLaneNumber(edge_id)
+        for lane_idx in range(n_lanes):
+            lane_id = f"{edge_id}_{lane_idx}"
+            try:
+                links = traci.lane.getLinks(lane_id)
+                for link in links:
+                    direction = link[6]  # (approachedLane, internal, prio, open, foe, state, dir, length)
+                    if direction == 's':
+                        through_lanes.append(lane_idx)
+                        break
+            except Exception:
+                pass
+
+        self._through_lanes_cache[edge_id] = through_lanes
+        print(f"  [LaneInfo] Edge {edge_id}: through lanes = {through_lanes} (of {n_lanes} total)")
+        return through_lanes
+
+    def _find_target_through_lane(self, edge_id, current_lane):
+        """Find the nearest through-movement lane different from current_lane.
+
+        Returns:
+            Target lane index, or None if no valid target exists.
+        """
+        through_lanes = self._get_through_lanes(edge_id)
+        valid = [l for l in through_lanes if l != current_lane]
+        if not valid:
+            return None
+        return min(valid, key=lambda l: abs(l - current_lane))
+
     def assist_stuck_vehicles(self, current_time):
         """Progressively help vehicles stuck behind obstacles to change lanes.
 
         Uses SUMO's sublane model parameters (lcPushy, lcAssertive, lcImpatience)
         to make stuck vehicles increasingly aggressive about lane changing.
         After 100s of waiting, forces a lane change by overriding safety checks.
+
+        Lane change targets are restricted to through-movement lanes only
+        (determined from lane connection directions) to prevent vehicles from
+        ending up in turn-only lanes.
         """
         if not hasattr(self, 'obstacle_vehicles') or not self.obstacle_vehicles:
             return
@@ -423,15 +473,14 @@ class SUMODelayCalculator:
                             self._stuck_timers[veh_id] = current_time
 
                         wait = current_time - self._stuck_timers[veh_id]
+                        cur_lane = traci.vehicle.getLaneIndex(veh_id)
+                        edge_id = traci.vehicle.getRoadID(veh_id)
+                        target = self._find_target_through_lane(edge_id, cur_lane)
 
                         if wait > 100:
                             # === Force lane change: override all safety ===
-                            traci.vehicle.setLaneChangeMode(veh_id, 0)
-                            cur_lane = traci.vehicle.getLaneIndex(veh_id)
-                            edge_id = traci.vehicle.getRoadID(veh_id)
-                            n_lanes = traci.edge.getLaneNumber(edge_id)
-                            target = cur_lane + 1 if cur_lane + 1 < n_lanes else cur_lane - 1
-                            if 0 <= target < n_lanes:
+                            if target is not None:
+                                traci.vehicle.setLaneChangeMode(veh_id, 0)
                                 traci.vehicle.changeLane(veh_id, target, 15.0)
                             self._lc_force_count += 1
                         elif wait > 60:
@@ -439,11 +488,15 @@ class SUMODelayCalculator:
                             traci.vehicle.setParameter(veh_id, "laneChangeModel.lcPushy", "1.0")
                             traci.vehicle.setParameter(veh_id, "laneChangeModel.lcAssertive", "5.0")
                             traci.vehicle.setParameter(veh_id, "laneChangeModel.lcImpatience", "1.0")
+                            if target is not None:
+                                traci.vehicle.changeLane(veh_id, target, 5.0)
                         elif wait > 30:
                             # Moderately aggressive
                             traci.vehicle.setParameter(veh_id, "laneChangeModel.lcPushy", "0.5")
                             traci.vehicle.setParameter(veh_id, "laneChangeModel.lcAssertive", "3.0")
                             traci.vehicle.setParameter(veh_id, "laneChangeModel.lcImpatience", "0.5")
+                            if target is not None:
+                                traci.vehicle.changeLane(veh_id, target, 5.0)
                         break  # only match first obstacle on this lane
             except Exception:
                 pass
