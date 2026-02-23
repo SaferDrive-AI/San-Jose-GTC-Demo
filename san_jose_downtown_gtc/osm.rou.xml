@@ -172,7 +172,7 @@
           departLane="best"/>
     <flow route="r_3" vehsPerHour="120" id="flow_ns_south_left" type="realistic_traffic_mix" begin="0" end="1800"
           departLane="best"/>
-    <flow route="r_4" vehsPerHour="185" id="flow_ns_north_straight" type="realistic_traffic_mix" begin="0" end="1800"
+    <flow route="r_4" vehsPerHour="115" id="flow_ns_north_straight" type="realistic_traffic_mix" begin="0" end="1800"
           departLane="best"/>
     <flow route="r_5" vehsPerHour="39" id="flow_ew_west_left" type="realistic_traffic_mix" begin="0" end="1800"
           departLane="best"/>
@@ -180,7 +180,7 @@
           departLane="1"/>
     <flow route="r_7" vehsPerHour="43" id="flow_ns_north_left" type="realistic_traffic_mix" begin="0" end="1800"
           departLane="best"/>
-    <flow route="r_8" vehsPerHour="430" id="flow_ns_south_straight" type="realistic_traffic_mix" begin="0" end="1800"
+    <flow route="r_8" vehsPerHour="400" id="flow_ns_south_straight" type="realistic_traffic_mix" begin="0" end="1800"
           departLane="best"/>
     <flow route="r_9" vehsPerHour="1" id="flow_ew_west_right" type="realistic_traffic_mix" begin="0" end="1800"
           departLane="best"/>
