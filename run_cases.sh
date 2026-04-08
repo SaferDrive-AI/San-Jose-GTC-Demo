@@ -1,9 +1,8 @@
 #!/bin/bash
-# Run 4 SUMO simulations (obstacle):
+# Run 3 SUMO simulations:
 #   Case 1: Benchmark — no obstacle, bench mode (original TLS "org")
 #   Case 2: Benchmark + obstacle (bench mode - original TLS)
-#   Case 3: Optimized (Static) + obstacle (opt mode)
-#   Case 4: Optimized (Dynamic) + obstacle (dynamic mode)
+#   Case 3: Optimized (Dynamic) + obstacle (dynamic mode)
 #
 # Usage: bash run_cases.sh
 
@@ -33,7 +32,7 @@ SB_RIGHT="37.335578, -121.892244"
 OBSTACLE_POS=${WB_THR}
 PREFIX="WB_thr"
 
-TOTAL=5
+TOTAL=3
 RUN=0
 
 run_case() {
@@ -52,7 +51,7 @@ run_case() {
         --obstacles "$obstacles" \
         --mode "$mode" \
         --output "$OUTPUT_DIR/delay_${tag}.json" \
-        --no-gui
+        --gui
         # --tripinfo-output "$OUTPUT_DIR/tripinfo_${tag}.xml" \
         # --statistic-output "$OUTPUT_DIR/statistic_${tag}.xml" \
         # --no-gui
@@ -64,19 +63,13 @@ run_case() {
 }
 
 # Case 1: Benchmark (no obstacle, bench mode — original TLS)
-run_case "Benchmark (no obstacle, original TLS)" "" "bench" "benchmark"
+#run_case "Benchmark (no obstacle, original TLS)" "" "bench" "benchmark"
 
 # Case 2: Benchmark + obstacle (bench mode - original TLS)
 run_case "${PREFIX} obstacle, original TLS" "$OBSTACLE_POS" "bench" "bench_${PREFIX}_obstacle"
 
-# Case 3: Optimized (Static) + no obstacle  (opt mode)
-run_case "Optimized (Static) + no obstacle" "" "opt" "opt_${PREFIX}_no_obstacle"
-
-# Case 4: Optimized (Static) + obstacle (opt mode)
-run_case "${PREFIX} obstacle, optimized TLS" "$OBSTACLE_POS" "opt" "opt_${PREFIX}_obstacle"
-
-# Case 5: Optimized (Dynamic) + obstacle (dynamic mode)
-run_case "${PREFIX} obstacle, dynamic TLS" "$OBSTACLE_POS" "dynamic" "dynamic_${PREFIX}_obstacle"
+# Case 3: Optimized (Dynamic) + obstacle (dynamic mode)
+#run_case "${PREFIX} obstacle, dynamic TLS" "$OBSTACLE_POS" "dynamic" "dynamic_${PREFIX}_obstacle"
 
 echo ""
 echo "============================================================"

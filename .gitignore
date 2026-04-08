@@ -1,5 +1,7 @@
 # IDE
 .idea/
+.vscode/
+.claude/
 
 # Python
 __pycache__/
@@ -18,4 +20,24 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Large files — videos, model weights, screenshots
+*.mp4
+*.mkv
+weights/
+screenshots/
+
+# Background map tiles (large image sets)
+*/background_images/
+*/background_images_backup_*/
+
+# Large network/geo files
+san_jose_full_new/osm_modified.net.xml
+san_jose_full_new/osm.net.xml.gz
+san_jose_full_new/osm_merged.net.xml.gz
+san_jose_full_new/osm_merged.net.xml.gz.bak*
+san_jose_full_new/osm_bbox.osm.xml.gz
+san_jose_full_new/tmp_patch
+
+# Analysis output
 traffic_data_analysis/delay_result/

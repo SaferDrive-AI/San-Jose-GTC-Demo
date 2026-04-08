@@ -23,6 +23,7 @@ import sys
 import os
 import argparse
 import json
+import time
 import tempfile
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
@@ -42,7 +43,7 @@ class SUMODelayCalculator:
 
     def __init__(self, net_file, route_file, obstacles=None, tls_program=None,
                  sim_time=3600, step_length=0.1, gui=False, output_file=None, mode='static',
-                 tripinfo_file=None, statistic_file=None):
+                 tripinfo_file=None, statistic_file=None, program_id=None):
         """
         Initialize calculator
 
@@ -69,6 +70,8 @@ class SUMODelayCalculator:
         self.mode = mode
         self.tripinfo_file = tripinfo_file
         self.statistic_file = statistic_file
+        self.program_id = program_id
+        self.initial_vehicles = []
 
         self.sumo_binary = 'sumo-gui' if self.gui else 'sumo'
 
@@ -233,8 +236,9 @@ class SUMODelayCalculator:
                     )
 
                     # Set speed mode: disable all safety checks, allow complete stop
-                    # 0x00 = disable all checks
                     traci.vehicle.setSpeedMode(obstacle_veh_id, 0)
+                    # Disable all lane change behavior
+                    traci.vehicle.setLaneChangeMode(obstacle_veh_id, 0)
 
                     # Set speed to 0
                     traci.vehicle.setSpeed(obstacle_veh_id, 0)
@@ -270,6 +274,100 @@ class SUMODelayCalculator:
                 print(f"  ✗ Failed to add obstacle vehicle {idx}: {e}")
                 import traceback
                 traceback.print_exc()
+
+    # ------------------------------------------------------------------
+    #  Initial vehicle injection
+    # ------------------------------------------------------------------
+    _type_id_map = {
+        'car':          'car_normal',
+        'suv':          'suv_normal',
+        'pickup':       'pickup_normal',
+        'truck':        'truck_delivery',
+        'semi':         'semi_truck',
+        'bus':          'bus_transit',
+        'bus_transit':  'bus_transit',
+        'bus_school':   'bus_school',
+        'motorcycle':   'motorcycle_normal',
+    }
+
+    def inject_manual_vehicles(self):
+        """Inject initial vehicles into the simulation at specified GPS positions."""
+        if not self.initial_vehicles:
+            return
+        self.manual_vehicle_ids = []
+        self._pending_destinations = {}
+        print(f"\n  Injecting {len(self.initial_vehicles)} initial vehicles...")
+        for veh_idx in range(len(self.initial_vehicles)):
+            self._inject_single_vehicle(veh_idx)
+        traci.simulationStep()  # materialize
+        print(f"    Placed {len(self.manual_vehicle_ids)} initial vehicles")
+
+    def _inject_single_vehicle(self, veh_idx):
+        """Inject one manual vehicle by index. Tuple: (type, lat, lon, dest_edge)"""
+        veh_info = self.initial_vehicles[veh_idx]
+        veh_id = f'manual_veh_{veh_idx}'
+
+        if isinstance(veh_info, (tuple, list)):
+            veh_type  = veh_info[0]
+            lat       = veh_info[1]
+            lon       = veh_info[2]
+            dest_edge = veh_info[3] if len(veh_info) > 3 else None
+        else:
+            veh_type  = veh_info.get('type', 'car')
+            lat       = veh_info['lat']
+            lon       = veh_info['lon']
+            dest_edge = veh_info.get('dest_edge', None)
+
+        sumo_type_id = self._type_id_map.get(veh_type, veh_type)
+
+        try:
+            x, y = self.latlon_to_xy(lat, lon)
+
+            # Use convertRoad to snap to nearest lane center line
+            edge_id, lane_pos, lane_idx = traci.simulation.convertRoad(x, y)
+            if not edge_id or edge_id.startswith(':'):
+                # convertRoad returned internal edge, fall back to _find_nearest_edge
+                edge_id, lane_idx = self._find_nearest_edge(x, y)
+                lane_pos = None
+                if not edge_id:
+                    print(f"  [{veh_idx}] {veh_type}: no nearby edge, skipped")
+                    return
+
+            route_edges = [edge_id]
+            if dest_edge and dest_edge != edge_id:
+                result = traci.simulation.findRoute(edge_id, dest_edge)
+                if result.edges:
+                    route_edges = list(result.edges)
+
+            route_id = f'manual_route_{veh_idx}'
+            traci.route.add(route_id, route_edges)
+
+            traci.vehicle.add(
+                vehID=veh_id,
+                routeID=route_id,
+                typeID=sumo_type_id,
+                depart='now',
+                departLane='best',
+                departPos='base',
+                departSpeed='0'
+            )
+
+            # moveTo places vehicle exactly on lane center line
+            lane_id = f"{edge_id}_{lane_idx}"
+            if lane_pos is not None:
+                traci.vehicle.moveTo(veh_id, lane_id, lane_pos)
+            else:
+                traci.vehicle.moveToXY(
+                    vehID=veh_id, edgeID=edge_id, laneIndex=lane_idx,
+                    x=x, y=y, angle=-1001, keepRoute=1
+                )
+
+            self.manual_vehicle_ids.append(veh_id)
+            self._pending_destinations[veh_id] = dest_edge
+            print(f"  [{veh_idx}] {veh_type}: placed at ({lat:.6f}, {lon:.6f}) → dest={dest_edge}")
+
+        except Exception as e:
+            print(f"  [{veh_idx}] {veh_type}: injection failed - {e}")
 
     def _find_nearest_edge(self, x, y):
         """Find nearest edge and lane"""
@@ -757,7 +855,7 @@ class SUMODelayCalculator:
             sumo_cmd = [
                 self.sumo_binary,
                 '-c', self.config_file,
-                '--start',  # Auto-start simulation (GUI mode)
+                # '--start',  # Auto-start simulation (GUI mode) — paused for inspection
                 '--quit-on-end',  # Auto-quit on end
                 '--time-to-teleport', '-1',  # Disable teleportation so obstacles stay forever
                 '--end', str(self.sim_time),  # Explicit end time
@@ -777,12 +875,19 @@ class SUMODelayCalculator:
             # Zoom into the intersection area
             if self.gui:
                 # Center on the intersection (average of obstacle coords)
-                center_x, center_y = self.latlon_to_xy(37.3354, -121.8921)
+                center_x, center_y = self.latlon_to_xy(37.3356, -121.8921)
                 traci.gui.setOffset("View #0", center_x, center_y)
-                traci.gui.setZoom("View #0", 300)
+                traci.gui.setZoom("View #0", 350)
+                traci.gui.setAngle("View #0", 60.0)
 
             # Add obstacles
             self.add_obstacles_via_traci()
+
+            # Inject initial vehicles (calls simulationStep internally)
+            self.inject_manual_vehicles()
+
+            # Re-pin obstacle after inject's simulationStep
+            self.update_obstacle_positions()
 
             # Set traffic light program
             self.set_tls_program_via_traci()
@@ -791,9 +896,15 @@ class SUMODelayCalculator:
             print(f"\nRunning simulation...")
             step = 0
             total_steps = int(self.sim_time / self.step_length)
+            freeze_step = int(0.3 / self.step_length)  # freeze after 0.3s to let positions settle
 
             while step < total_steps:
                 traci.simulationStep()
+
+                # Freeze at 0.3s so vehicles settle into correct positions
+                if step == freeze_step:
+                    print("  Freezing for 10 seconds...")
+                    time.sleep(10)
 
                 # Update obstacle positions (keep stationary)
                 self.update_obstacle_positions()
@@ -1123,6 +1234,8 @@ TLS Program JSON format example:
                        help='SUMO tripinfo XML output file path')
     parser.add_argument('--statistic-output', default=None,
                        help='SUMO overall statistic XML output file path')
+    parser.add_argument('--program-id', default=None,
+                       help='Explicit TLS program ID to use')
 
     args = parser.parse_args()
 
@@ -1153,8 +1266,64 @@ TLS Program JSON format example:
         output_file=args.output,
         mode=args.mode,
         tripinfo_file=args.tripinfo_output,
-        statistic_file=args.statistic_output
+        statistic_file=args.statistic_output,
+        program_id=args.program_id
     )
+
+    # Vehicle positions from 12s snapshot (main_demo.py simulation)
+    calculator.initial_vehicles = [
+            # --- In junction (transitioning through intersection) ---
+            ('car_normal',           37.33556696, -121.89197582, '417034224#0'),  # manual_veh_0, junction
+
+            # --- WB queue (San Fernando, heading west from east side) ---
+            ('car_normal',           37.33597457, -121.89111547, '417034218#1'),  # bg_veh_2316, 416901218#1
+            ('pickup_conservative',  37.33591348, -121.89119281, '417034218#1'),  # bg_veh_2317, junction
+            # ('car_normal',           37.33590254, -121.89127401, '417034218#1'),  # bg_veh_2314, 517627277
+            ('suv_normal',           37.33580404, -121.89142393, '417034218#1'),  # bg_veh_2315, 517627277
+            ('car_normal',           37.33576603, -121.89150326, '417034224#0'),  # manual_veh_6, 517627277
+            ('car_normal',           37.33573349, -121.89157228, '417034224#0'),  # manual_veh_5, junction
+            ('car_normal',           37.33570413, -121.89163271, '417034224#0'),  # manual_veh_4, 1418903639#0
+            ('car_normal',           37.33566663, -121.89171114, '417034224#0'),  # manual_veh_3, 1418903639#0
+            ('car_normal',           37.33563373, -121.89177982, '417034224#0'),  # manual_veh_2, 1418903639#0
+            ('bus_transit',          37.33565285, -121.89179467, '417034224#0'),  # manual_veh_13, 1418903639#0 (bus)
+            ('car_normal',           37.33559809, -121.89185422, '417034224#0'),  # manual_veh_1, 1418903639#0
+            ('car_normal',           37.335599,   -121.891926,   '417034224#0'),  # added
+
+            # --- EB vehicles (San Fernando, heading east from west side) ---
+            ('car_normal',           37.33567193, -121.89158943, '416909351#1'),  # manual_veh_7, -1418903639#0
+            ('car_normal',           37.33562108, -121.89164041, '416909351#1'),  # manual_veh_8, -1418903639#0
+            ('car_conservative',     37.33591818, -121.89100746, '-416901218#1'), # bg_veh_287, -416901218#1
+            ('suv_conservative',     37.33600524, -121.89087750, '-416901218#1'), # bg_veh_291, -416901218#1
+            ('car_conservative',     37.33511116, -121.89270949, '-416901218#1'), # bg_veh_382, -28463687#0
+            ('car_normal',           37.335665,   -121.891609,   '416909351#1'),  # added
+            ('car_normal',           37.335666,   -121.891531,   '416909351#1'),  # added
+
+            # --- SB approach (4th St, heading south from north) ---
+            ('car_conservative',     37.33587848, -121.89241835, '417034088#0'),  # bg_veh_95, -157782193#0
+            ('car_normal',           37.335635, -121.892248,     '417034088#0'),  # bg_veh_88, -416901209#1
+            ('pickup_normal',        37.335691, -121.892286,     '417034088#0'),  # bg_veh_92, -416901209#1
+            ('car_normal',           37.33564749, -121.89221571, '417034088#0'),  # bg_veh_85, -416901209#1
+            ('car_normal',           37.33562713, -121.89223402, '495569632'),    # manual_veh_10, -416901209#1
+            ('suv_normal',           37.33561354, -121.89225732, '417034088#0'),  # bg_veh_86, -416901209#1
+            ('car_normal',           37.33558951, -121.89217299, '157781953#2'),  # manual_veh_11, -416901209#1
+            ('car_normal',           37.33557633, -121.89219659, '495569632'),    # manual_veh_9, -416901209#1
+            ('car_conservative',     37.33556354, -121.89222048, '417034088#0'),  # bg_veh_89, -416901209#1
+            ('car_normal',           37.335588,   -121.892214,   '417034088#0'),  # added
+
+            # --- NB approach (from south, heading north) ---
+            # ('suv_aggressive',       37.33537495, -121.89192693, '157782193#0'),  # bg_veh_325, -417034082#1
+            ('car_normal',           37.335341, -121.891929, '157782193#2'),  # manual_veh_12, -417034082#1
+            ('car_aggressive',       37.335359, -121.891904, '157782193#0'),  # bg_veh_332, -417034082#1
+            ('car_aggressive',       37.33529182, -121.89186467, '157782193#0'),  # bg_veh_331, -417034082#1
+            ('suv_normal',           37.33522849, -121.89181724, '157782193#0'),  # bg_veh_333, -417034082#1
+            ('car_conservative',     37.33514847, -121.89175728, '157782193#0'),  # bg_veh_334, junction
+            ('car_normal',           37.33509291, -121.89174905, '157782193#0'),  # bg_veh_316, -417034071
+            ('car_normal',           37.335311,   -121.891907,   '157782193#0'),  # added
+            ('car_normal',           37.335265,   -121.891870,   '157782193#0'),  # added
+
+            # --- 4th St NB exit (past intersection, heading north) ---
+            ('car_normal',           37.33601363, -121.89241835, '157782193#2'),  # bg_veh_1189, 157782193#0
+        ]
 
     results = calculator.run()
 

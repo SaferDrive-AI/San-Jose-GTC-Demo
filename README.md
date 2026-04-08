@@ -1,329 +1,299 @@
-# SUMO Traffic Simulation Delay Calculator
+# Obstacle-Aware Traffic Signal Optimization — San Jose GTC Demo
 
-A comprehensive traffic simulation tool using SUMO (Simulation of Urban MObility) with TraCI (Traffic Control Interface) for dynamic traffic flow control and delay analysis.
+A SUMO-based traffic simulation platform that evaluates how stalled vehicles (obstacles) impact intersection performance and demonstrates adaptive signal timing optimization to mitigate delay.
 
-## Overview
+## Background
 
-This project provides tools to:
-- Simulate traffic scenarios with customizable road networks
-- Add obstacles (using stationary vehicles) at specific geographic locations
-- Configure custom traffic light programs
-- Analyze traffic delay metrics
-- Generate directional traffic flows with varying densities
+When a vehicle stalls at an intersection, it reduces lane capacity and increases delay for surrounding traffic. This project simulates such scenarios at the **S Market St & W Santa Clara St** intersection in downtown San Jose, and tests optimized traffic signal plans that redistribute green time to compensate for the capacity loss.
 
-## Features
+The core idea: if a westbound (WB) through lane is blocked, the signal controller can **increase east-west green time** and **reduce north-south green time** to better serve the affected approach — yielding lower overall delay.
 
-- **Geographic Coordinate Support**: Input obstacle locations using latitude/longitude coordinates
-- **Realistic Obstacle Simulation**: Obstacles implemented as stationary vehicles that other vehicles respond to naturally
-- **Automatic Angle Detection**: Obstacles automatically align with road angles, or you can specify manually
-- **Dynamic Traffic Light Control**: Modify traffic light programs during simulation
-- **Real-time Data Collection**: Collect and analyze delay statistics during simulation
-- **GUI Support**: Optional visual mode for observing simulation behavior
-- **Directional Traffic Generation**: Create traffic flows with different densities in different directions
+## Key Results
 
-## Prerequisites
+| Scenario | Avg Delay | Vehicles Arrived |
+|----------|-----------|-----------------|
+| Default plan, no obstacle | 26.1s | 767 |
+| Default plan + WB stalled veh | 31.8s | 739 |
+| Plan 1 (EW: 26.5s) + WB stalled veh | 29.9s | 760 |
+| Plan 2 (EW: 25.3s) + WB stalled veh | 29.7s | 732 |
+| Plan 3 (EW: 24.1s) + WB stalled veh | 29.3s | 715 |
+| Plan 4 / Optimal (EW: 28.2s) + WB stalled veh | 28.3s | 764 |
 
-### Required Software
-- **SUMO** (Simulation of Urban MObility) - Version 1.8.0 or higher
-- **Python** 3.7 or higher
-- **TraCI** (included with SUMO)
-
-### Installation
-
-1. Install SUMO:
-   ```bash
-   pip install eclipse-sumo==1.23.1
-   ```
-   
 ## Project Structure
 
 ```
-San_Jose_demo/
-├── main.py                              # Main simulation controller
-├── generate_directional_routes.py      # Generate directional traffic routes
-├── generate_12phase_traffic.py         # Generate 12-phase traffic patterns
-├── san_jose_downtown_gtc/              # Network and route files
-│   ├── osm.net.xml                     # Road network file
-│   ├── osm.passenger.trips.xml         # Passenger trip definitions
-│   └── osm.sumocfg                     # SUMO configuration file
-└── tls_config_example.json             # Example traffic light configuration
+San Jose GTC Demo/
+├── main.py                          # Core simulation engine (TraCI-based)
+├── main_demo.py                     # Demo video recording with cinematic camera (zoom, rotation)
+├── main_overview.py                 # Fixed overhead camera demo (no obstacle, no zoom)
+├── main_scene2.py                   # Alternate scene with wider FOV and different intersection
+├── generate_12phase_traffic.py      # Generate 12-phase directional traffic flows
+├── generate_directional_routes.py   # Generate routes with directional asymmetry
+├── merge_networks.py                # Safe add-only merge of downtown network into full network
+├── upscale_tiles.py                 # Batch 4x upscale background tiles via Real-ESRGAN
+├── tls_config_example.json          # Example TLS configuration
+├── demo_config.json                 # Demo video parameters (zoom, rotation, vehicle count, etc.)
+├── routes.rou.xml                   # Root-level route definitions
+├── SJ_scene4_4cases.mp4             # Pre-recorded demo video (4 cases)
+│
+├── run_cases.sh                     # Run 3-case benchmark comparison
+├── run_plan_cases.sh                # Run 5-case signal plan comparison
+├── run_simulations.sh               # Run full 25-case obstacle sweep
+├── run_full_new.sh                  # Run demo on full San Jose network (cinematic video)
+├── run_all.sh                       # Run both demo + overview simulations sequentially
+├── run_overview.sh                  # Run fixed-camera overview demo
+├── make_video.sh                    # Convert screenshot frames to MP4 via ffmpeg
+│
+├── san_jose_downtown_gtc/           # SUMO network & config (downtown intersection)
+│   ├── osm.net.xml                  # Road network (S Market & Santa Clara)
+│   ├── osm.tls.xml                  # Traffic light programs (org + optimized plans)
+│   ├── osm.sumocfg                  # SUMO configuration
+│   ├── osm.rou.xml                  # Base routes with vehicle type definitions
+│   ├── directional_traffic.rou.xml  # Generated directional flows
+│   └── background_images/           # Map tile images for visualization
+│
+├── san_jose_full_new/               # SUMO network & config (full San Jose area)
+│   ├── osm_merged.net.xml.gz        # Merged full-area road network
+│   ├── osm.tls.xml                  # Traffic light programs
+│   ├── simulation.sumocfg           # SUMO configuration
+│   ├── intersection_flows.rou.xml   # Intersection flow definitions
+│   ├── background_trips.trips.xml   # Background vehicle trips
+│   ├── local_preload.trips.xml      # Pre-loaded local trips
+│   ├── *_vehicles_cache.json        # Cached vehicle placements for scenes
+│   └── background_images/           # 7000+ upscaled map tiles
+│
+├── weights/
+│   └── RealESRGAN_x4plus.pth        # Real-ESRGAN model weights for tile upscaling
+│
+└── traffic_data_analysis/
+    ├── plot_delay_comparison.py      # Plot 3-case delay comparison
+    ├── plot_plan_comparison.py       # Plot 4-plan signal optimization comparison
+    ├── delay_result/                 # Simulation output JSONs and charts
+    └── linkVision_rawData/           # LinkVision API raw data (stalled car detection, metadata)
+```
+
+## Prerequisites
+
+- **SUMO** >= 1.22.0 with TraCI
+- **Python** >= 3.7
+- **matplotlib**, **numpy**
+
+```bash
+pip install eclipse-sumo matplotlib numpy
 ```
 
 ## Usage
 
-### Basic Usage: main.py
+### Quick Start — 3-Case Benchmark Comparison (`run_cases.sh`)
 
-The main script runs a SUMO simulation with customizable parameters:
+Runs 3 simulations on the **downtown intersection** network to demonstrate the impact of obstacles and adaptive signal control:
+
+| Case | Obstacle | Signal Mode | Description |
+|------|----------|-------------|-------------|
+| 1 | None | `bench` (original) | Baseline: normal traffic with default signal timing |
+| 2 | WB through lane | `bench` (original) | A vehicle stalls in the WB through lane; signal timing stays unchanged, showing increased delay |
+| 3 | WB through lane | `dynamic` (adaptive) | Same stalled vehicle, but signal controller detects the blocked lane and switches to an optimized plan |
+
+Outputs delay JSONs + tripinfo XMLs, then generates a comparison bar chart via `plot_delay_comparison.py`.
+
+```bash
+bash run_cases.sh
+```
+
+### 5-Case Signal Plan Comparison (`run_plan_cases.sh`)
+
+Runs 5 simulations on the **downtown intersection** network, all with a WB stalled vehicle. Tests progressively optimized signal timing plans that shift green time from NS to EW:
+
+| Case | Plan | EW Green | NS Green | Description |
+|------|------|----------|----------|-------------|
+| 1 | `org` (original) | 26.4s | 27.8s | Default timing — no adaptation |
+| 2 | `plan_1` | 26.5s | 19.0s | Slight EW increase, moderate NS decrease |
+| 3 | `plan_2` | 25.3s | 18.5s | Further NS reduction |
+| 4 | `plan_3` | 24.1s | 18.0s | Aggressive NS reduction |
+| 5 | `plan_4` (optimal) | 29.0s | 16.5s | Best balance: maximum EW green for WB blockage |
+
+Generates a comparison chart via `plot_plan_comparison.py`.
+
+```bash
+bash run_plan_cases.sh
+```
+
+### Full 25-Case Obstacle Sweep (`run_simulations.sh`)
+
+Comprehensive evaluation on the **downtown intersection** network. Tests all 12 obstacle positions (EB/WB/NB/SB × left/through/right lanes) in both static and dynamic signal modes:
+
+| Runs | Mode | Description |
+|------|------|-------------|
+| 1 | `bench` | Benchmark: no obstacle, original signal timing |
+| 2–13 | `bench` | 12 obstacle positions with original signal (static) |
+| 14–25 | `dynamic` | Same 12 obstacle positions with adaptive signal switching |
+
+Each run simulates 1800 seconds. Outputs 25 delay JSON files for analysis.
+
+```bash
+bash run_simulations.sh
+```
+
+### Full San Jose Network Demo (`run_full_new.sh`)
+
+Runs a cinematic demo on the **full San Jose network** (`san_jose_full_new/`) with ~3500 background vehicles. Produces a video-ready simulation with zoom, rotation, and camera transitions:
+
+| Phase | Description |
+|-------|-------------|
+| Setup | Generates background random trips and intersection flows via SUMO tools |
+| Warmup | Background traffic fills the network for realistic density |
+| Obstacle | WB stalled vehicle placed at the intersection |
+| Cinematic | Camera zooms in, pauses, releases vehicles, then runs main simulation loop |
+| Recording | Screenshots captured automatically for video conversion |
+
+Supports flags: `--no-gui` (headless), `--skip-setup` (reuse generated files), `--bench` (benchmark mode).
+
+```bash
+bash run_full_new.sh
+bash run_full_new.sh --no-gui --skip-setup
+```
+
+### Run Both Demo Simulations (`run_all.sh`)
+
+Sequentially runs two demo simulations on the **full San Jose network**:
+
+| Task | Script | Description |
+|------|--------|-------------|
+| 1 | `main_demo.py` | Cinematic zoom-in + rotation video with stalled vehicle |
+| 2 | `main_overview.py` | Fixed overhead camera overview (no obstacle, no zoom) |
+
+Both use ~3500 background vehicles. Supports `--no-gui` flag.
+
+```bash
+bash run_all.sh
+bash run_all.sh --no-gui
+```
+
+### Overview Demo (`run_overview.sh`)
+
+Runs a simple fixed-overhead-camera demo on the **full San Jose network** — no stalled vehicle, no zoom animation. Shows general traffic flow for 30 seconds with a 10-second warmup.
+
+```bash
+bash run_overview.sh
+bash run_overview.sh --no-gui
+```
+
+### Convert Screenshots to Video (`make_video.sh`)
+
+Converts SUMO screenshot frames (from `screenshots/` directory) into an MP4 video at 60fps using ffmpeg (H.264 codec).
+
+```bash
+bash make_video.sh
+bash make_video.sh /path/to/custom/screenshots
+```
+
+### Single Simulation
 
 ```bash
 python main.py \
-    --net-file san_jose_downtown_gtc/osm.net.xml \
-    --route-file san_jose_downtown_gtc/osm.passenger.trips.xml \
-    --sim-time 3600 \
+    --obstacles "37.335577, -121.891913" \
+    --mode dynamic \
+    --output traffic_data_analysis/delay_result/delay_test.json \
     --gui
 ```
 
-#### Command Line Arguments
-
-| Argument | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `--net-file` | Yes | - | SUMO network file (.net.xml) |
-| `--route-file` | Yes | - | Route file (.rou.xml or .trips.xml) |
-| `--obstacles` | No | None | Obstacle definitions (see format below) |
-| `--tls-program` | No | None | Custom traffic light program (JSON file or string) |
-| `--sim-time` | No | 3600 | Simulation duration in seconds |
-| `--step-length` | No | 1.0 | Simulation step length in seconds |
-| `--gui` | No | False | Use GUI mode for visualization |
-| `--output` | No | None | Output JSON file path for results |
-
-#### Obstacle Format
-
-Obstacles are defined using geographic coordinates:
-
-```
-"lat,lon[,width,height,angle];..."
-```
-
-Parameters:
-- `lat`: Latitude (required)
-- `lon`: Longitude (required)
-- `width`: Width in meters (optional, default 0, currently unused)
-- `height`: Height in meters (optional, default 0, currently unused)
-- `angle`: Angle in degrees (optional, auto-detects from road if not provided)
-
-**Examples:**
-
-```bash
-# Single obstacle with auto angle
---obstacles "37.33251,-121.892360"
-
-# Single obstacle with specified angle
---obstacles "37.33251,-121.892360,0,0,90"
-
-# Multiple obstacles
---obstacles "37.33251,-121.892360;37.33252,-121.892370"
-
-# Multiple obstacles with different angles
---obstacles "37.33251,-121.892360,0,0,90;37.33252,-121.892370,0,0,45"
-```
-
-#### Traffic Light Program Format
-
-Traffic light programs can be specified as JSON:
-
-```json
-{
-  "cluster_25977365_314061330": {
-    "programID": "custom_program",
-    "phases": [
-      {
-        "duration": 30,
-        "state": "GGGrrr",
-        "minDur": 10,
-        "maxDur": 60
-      },
-      {
-        "duration": 5,
-        "state": "yyyrrr"
-      },
-      {
-        "duration": 30,
-        "state": "rrrGGG"
-      }
-    ]
-  }
-}
-```
-
-Save this as `tls_config.json` and use:
-```bash
---tls-program tls_config.json
-```
-
-### Complete Example
-
-Run a simulation with obstacles and custom traffic lights:
+### Specify an Explicit Signal Plan
 
 ```bash
 python main.py \
-    --net-file san_jose_downtown_gtc/osm.net.xml \
-    --route-file san_jose_downtown_gtc/osm.passenger.trips.xml \
-    --obstacles "37.335265,-121.892334" \
-    --tls-program tls_config_example.json \
-    --sim-time 1800 \
-    --gui \
-    --output results.json
+    --obstacles "37.335577, -121.891913" \
+    --program-id "1418903639#0_2" \
+    --output traffic_data_analysis/delay_result/delay_test.json \
+    --gui
 ```
 
-### Generate Directional Routes: generate_directional_routes.py
+## Simulation Modes
 
-Generate traffic routes with different densities in different directions:
+| Mode | `--mode` | Behavior |
+|------|----------|----------|
+| Benchmark | `bench` | Always uses original signal plan (`org`) |
+| Optimized | `opt` | Always uses optimized plan (`opt`) |
+| Dynamic | `dynamic` | Detects obstacle lane and switches to matching plan |
+| Explicit | `--program-id <ID>` | Uses the specified TLS program ID directly |
 
-```bash
-python generate_directional_routes.py \
-    --net-file san_jose_downtown_gtc/osm.net.xml \
-    --junction cluster_1984576776_3478559735_3478559736_3537422682_#1more \
-    --obstacle-direction east-west \
-    --high-flow 120 \
-    --low-flow 30 \
-    --output custom_routes.rou.xml
-```
+## Signal Plan Design
 
-#### Arguments
+All plans share a common 18-phase structure (100s cycle). The key variable phases are:
 
-| Argument | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `--net-file` | Yes | - | SUMO network file |
-| `--junction` | Yes | - | Target junction ID |
-| `--obstacle-direction` | Yes | - | Direction with obstacles: `east-west` or `north-south` |
-| `--high-flow` | No | 100 | High traffic flow (vehicles/hour) |
-| `--low-flow` | No | 20 | Low traffic flow (vehicles/hour) |
-| `--sim-time` | No | 1800 | Simulation duration (seconds) |
-| `--output` | No | custom_routes.rou.xml | Output route file |
+| Phase | Function | org (default) | Plan 4 (optimal for WB) |
+|-------|----------|---------------|------------------------|
+| EW main green | Serves EB/WB through traffic | 26.4s | 29.0s |
+| NS turning | Serves NB/SB left/right turns | 12.0s | 6.2s |
+| NS main green | Serves NB/SB through traffic | 27.8s | 16.5s |
 
-### Generate 12-Phase Traffic: generate_12phase_traffic.py
+Intermediate plans (plan_1 through plan_3) progressively shift green time from NS to EW.
 
-Generate traffic based on 12-phase traffic patterns:
+## Obstacle Positions
 
-```bash
-python generate_12phase_traffic.py \
-    --base-routes 12_phase_route.rou.xml \
-    --ew-flow 150 \
-    --ns-flow 30 \
-    --sim-time 1800 \
-    --output directional_traffic.rou.xml
-```
+Pre-defined GPS coordinates for 12 test positions around the intersection:
 
-#### Arguments
+| Direction | Left | Through | Right |
+|-----------|------|---------|-------|
+| EB | 37.335379, -121.892249 | 37.335358, -121.892248 | 37.335338, -121.892208 |
+| WB | 37.335558, -121.891889 | 37.335577, -121.891913 | 37.335601, -121.891930 |
+| NB | 37.335328, -121.891956 | 37.335340, -121.891927 | 37.335356, -121.891898 |
+| SB | 37.335605, -121.892187 | 37.335353, -121.892234 | 37.335578, -121.892244 |
 
-| Argument | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `--base-routes` | No | 12_phase_route.rou.xml | Base route file with 12 route definitions |
-| `--ew-flow` | No | 150 | East-west traffic flow (vehicles/hour) |
-| `--ns-flow` | No | 30 | North-south traffic flow (vehicles/hour) |
-| `--sim-time` | No | 1800 | Simulation duration (seconds) |
-| `--output` | No | directional_traffic.rou.xml | Output file path |
+## Output Format
 
-## Output
-
-The simulation generates comprehensive statistics including:
+Each simulation produces a JSON file:
 
 ```json
 {
   "configuration": {
-    "net_file": "path/to/network.net.xml",
-    "route_file": "path/to/routes.rou.xml",
+    "net_file": "...",
+    "route_file": "...",
     "obstacles": [...],
-    "simulation_time": 3600
+    "simulation_time": 1800,
+    "step_length": 0.1
   },
   "results": {
-    "total_departed": 500,
-    "total_arrived": 480,
-    "average_duration": 245.3,
-    "average_delay": 45.2,
-    "average_wait_time": 45.2,
-    "total_time_loss": 21696.0,
-    "vehicle_count": 480
+    "average_delay": 28.26,
+    "average_duration": 85.68,
+    "vehicle_count": 764,
+    "total_departed": 792,
+    "total_arrived": 764,
+    "total_time_loss": 21588.2
   }
 }
 ```
 
-### Metrics Explained
+## Vehicle Behavior Features
 
-- **total_departed**: Number of vehicles that entered the simulation
-- **total_arrived**: Number of vehicles that completed their journey
-- **average_duration**: Average trip duration in seconds
-- **average_delay**: Average time loss per vehicle (seconds)
-- **average_wait_time**: Average waiting time per vehicle (seconds)
-- **total_time_loss**: Total accumulated delay for all vehicles (seconds)
+- **Automatic rerouting**: Vehicles stuck > 30s recalculate their path every 5s
+- **Progressive lane changing**: Vehicles behind obstacles become increasingly aggressive (30s → moderate, 60s → aggressive, 100s → forced lane change)
+- **Stuck vehicle removal**: Non-obstacle vehicles waiting > 180s are teleported out
 
-## Typical Workflow
+## Python Modules
 
-1. **Prepare Network**: Ensure you have a SUMO network file (.net.xml)
+| File | Description |
+|------|-------------|
+| `main.py` | Core simulation engine — manages TraCI connection, obstacle placement, signal switching, delay calculation, rerouting, and lane-change logic |
+| `main_demo.py` | Extends `main.py` for cinematic demo recording — 7-phase workflow with camera zoom/rotation, vehicle freeze/release, and automatic screenshot capture |
+| `main_overview.py` | Simplified demo — fixed overhead camera, no obstacle, no animations. Inherits from `main_demo.py` |
+| `main_scene2.py` | Alternate scene targeting a different intersection area with wider FOV (zoom 600), simultaneous vehicle release |
+| `generate_12phase_traffic.py` | Generates 12-phase directional traffic flow definitions for the downtown intersection |
+| `generate_directional_routes.py` | Generates route files with configurable directional asymmetry (e.g., heavier WB flow) |
+| `merge_networks.py` | Safe add-only merge utility — adds edges/junctions from downtown network into full network without overwriting existing elements |
+| `upscale_tiles.py` | Batch 4x super-resolution of background map tiles using Real-ESRGAN (256×256 → 1024×1024) |
 
-2. **Generate Traffic**: Create directional traffic patterns
-   ```bash
-   python generate_directional_routes.py \
-       --net-file san_jose_downtown_gtc/osm.net.xml \
-       --junction <junction_id> \
-       --obstacle-direction east-west \
-       --high-flow 150 \
-       --low-flow 30 \
-       --output routes.rou.xml
-   ```
+## Two Simulation Networks
 
-3. **Run Simulation**: Execute with obstacles and analysis
-   ```bash
-   python main.py \
-       --net-file san_jose_downtown_gtc/osm.net.xml \
-       --route-file routes.rou.xml \
-       --obstacles "37.335265,-121.892334" \
-       --sim-time 1800 \
-       --gui \
-       --output results.json
-   ```
+This project includes two SUMO network configurations at different scales:
 
-4. **Analyze Results**: Review the generated JSON output file
+| Network | Directory | Scope | Use Case |
+|---------|-----------|-------|----------|
+| Downtown Intersection | `san_jose_downtown_gtc/` | Single intersection (S Market & Santa Clara) | Quantitative analysis: delay comparison, signal plan optimization, obstacle sweep |
+| Full San Jose | `san_jose_full_new/` | Larger area with merged road network | Demo/video: cinematic recordings with background traffic density |
 
-## Troubleshooting
+## LinkVision Integration
 
-### Common Issues
-
-**Error: "Cannot import traci module"**
-- Solution: Ensure SUMO is installed and `SUMO_HOME` is set correctly
-  ```bash
-  export SUMO_HOME="/usr/share/sumo"
-  ```
-
-**Error: "Network file not found"**
-- Solution: Verify the path to your .net.xml file is correct
-- Use absolute paths or ensure you're running from the correct directory
-
-**Simulation runs but no vehicles appear**
-- Check that your route file contains valid trips or flows
-- Verify that departure times are within the simulation time range
-- Use `--gui` mode to visually inspect the simulation
-
-**Obstacles not appearing in correct location**
-- Ensure latitude/longitude coordinates are correct
-- Check that coordinates fall within the network boundaries
-- Use GUI mode to verify obstacle placement
-
-## Advanced Configuration
-
-### Rerouting Parameters
-
-The simulation includes automatic rerouting for vehicles stuck in traffic. Configure in the code:
-
-```python
-# In SUMODelayCalculator.create_config_file()
-ET.SubElement(routing_elem, 'device.rerouting.period').set('value', '30')
-ET.SubElement(routing_elem, 'device.rerouting.adaptation-steps').set('value', '18')
-```
-
-### Vehicle Speed Modes
-
-Obstacle vehicles use specific speed modes to remain stationary:
-
-```python
-# Speed mode 0x00 = Disable all safety checks
-traci.vehicle.setSpeedMode(obstacle_veh_id, 0)
-traci.vehicle.setSpeed(obstacle_veh_id, 0)
-```
-
-## License
-
-This project uses SUMO, which is licensed under the Eclipse Public License 2.0.
-
-## Contributing
-
-Contributions are welcome. Please ensure all code follows the existing style and includes appropriate documentation.
-
-## Support
-
-For issues related to:
-- **SUMO**: Visit [SUMO Documentation](https://sumo.dlr.de/docs/)
-- **This Project**: Open an issue in the project repository
+The `traffic_data_analysis/linkVision_rawData/` directory contains raw data from the LinkVision API, including stalled car detection responses and ITS task metadata. This data feeds into the obstacle detection pipeline that triggers adaptive signal control.
 
 ## References
 

@@ -1,0 +1,16 @@
+{
+    "zoom_in_duration": 8,
+    "zoom_out_level": 200,
+    "zoom_mid_level": 1200,
+    "zoom_final_level": 10000,
+    "zoom_fast_fraction": 0.4,
+    "zoom_step_delay": 0.017,
+    "zoom_dwell_duration": 6.0,
+    "bg_vehicle_count": 4000,
+    "bg_seed": 42,
+    "bg_bounds": "-121.8985,37.3315,-121.8855,37.3395",
+    "freeze_duration": 10,
+    "conflict_distance": 10.0,
+    "screenshot_dir": "screenshots",
+    "rotate_angle": 60.0
+}

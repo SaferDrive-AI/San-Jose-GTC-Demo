@@ -8,7 +8,7 @@
     <input>
         <net-file value="osm.net.xml"/>
         <route-files value="osm.rou.xml"/>
-        <additional-files value="osm.poly.xml.gz, osm.tls.xml"/>
+        <additional-files value="osm.tls.xml"/>
     </input>
 
     <processing>
