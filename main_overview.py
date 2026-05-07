@@ -199,7 +199,7 @@ class SUMOOverviewRunner(SUMODemoRunner):
 
                 self.update_obstacle_positions()
                 self.update_tls_program()
-                self.trigger_rerouting(step)
+                self.trigger_rerouting(step * self.step_length)
                 self.assist_stuck_vehicles(step * self.step_length)
                 self.remove_stuck_vehicles(step * self.step_length)
                 self.collect_vehicle_data(step * self.step_length)

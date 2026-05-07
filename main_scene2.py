@@ -479,7 +479,7 @@ class SUMOScene2Runner(SUMODemoRunner):
                 self._delayed_vehicle_indices = still_pending
                 self.update_obstacle_positions()
                 self.update_tls_program()
-                self.trigger_rerouting(step)
+                self.trigger_rerouting(step * self.step_length)
                 self.assist_stuck_vehicles(step * self.step_length)
                 self.remove_stuck_vehicles(step * self.step_length)
                 self.collect_vehicle_data(step * self.step_length)
@@ -543,7 +543,7 @@ class SUMOScene2Runner(SUMODemoRunner):
 
                     self.update_obstacle_positions()
                     self.update_tls_program()
-                    self.trigger_rerouting(step)
+                    self.trigger_rerouting(step * self.step_length)
                     self.assist_stuck_vehicles(step * self.step_length)
                     self.remove_stuck_vehicles(step * self.step_length)
                     self.collect_vehicle_data(step * self.step_length)

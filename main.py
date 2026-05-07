@@ -72,12 +72,13 @@ class SUMODelayCalculator:
         self.statistic_file = statistic_file
         self.program_id = program_id
         self.initial_vehicles = []
+        self.applied_tls_program = None
 
         self.sumo_binary = 'sumo-gui' if self.gui else 'sumo'
 
         # Temporary configuration file
         self.temp_dir = tempfile.mkdtemp(prefix='sumo_sim_')
-        self.config_file = "/home/yilinwang/San Jose GTC Demo/san_jose_downtown_gtc/osm.sumocfg"
+        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "san_jose_downtown_gtc", "osm.sumocfg")
 
         # Statistical data
         self.vehicle_data = {}
@@ -433,17 +434,18 @@ class SUMODelayCalculator:
             except:
                 pass
 
-    def trigger_rerouting(self, step):
+    def trigger_rerouting(self, current_time):
         """Proactively trigger rerouting for congested vehicles"""
         if not hasattr(self, 'last_reroute_check'):
             self.last_reroute_check = 0
             self.reroute_count = 0
 
         # Check every 30 seconds
-        if step - self.last_reroute_check < 5:
+        if current_time - self.last_reroute_check < 30:
             return
 
-        self.last_reroute_check = step
+        self.last_reroute_check = current_time
+        period_count = 0
         vehicle_ids = traci.vehicle.getIDList()
 
         for veh_id in vehicle_ids:
@@ -461,11 +463,12 @@ class SUMODelayCalculator:
                     # Recalculate path using current network weights
                     traci.vehicle.rerouteTraveltime(veh_id)
                     self.reroute_count += 1
+                    period_count += 1
             except Exception:
                 pass
 
-        if self.reroute_count > 0 and step % 100 == 0:
-            print(f"\n  Triggered {self.reroute_count} reroutes")
+        if period_count > 0:
+            print(f"\n  Triggered {period_count} reroutes (total: {self.reroute_count})")
 
     def _get_through_lanes(self, edge_id):
         """Get lane indices that have through-movement (straight) connections.
@@ -635,6 +638,14 @@ class SUMODelayCalculator:
             except Exception:
                 pass
 
+    def _record_applied_tls(self, tls_id, program_id, reason):
+        """Remember the program actually applied via setProgram so it can be saved to JSON."""
+        self.applied_tls_program = {
+            'tls_id': tls_id,
+            'applied_program_id': program_id,
+            'reason': reason,
+        }
+
     def update_tls_program(self):
         """Update TLS programs based on simulation mode and obstacle status.
 
@@ -656,6 +667,7 @@ class SUMODelayCalculator:
         if self.mode == 'bench':
             try:
                 traci.trafficlight.setProgram(target_tls_id, "org")
+                self._record_applied_tls(target_tls_id, "org", "bench_mode_default")
                 print(f"\n  TLS {target_tls_id}: using original program 'org' (bench mode)")
             except Exception as e:
                 print(f"\n  TLS {target_tls_id}: failed to set program - {e}")
@@ -665,6 +677,7 @@ class SUMODelayCalculator:
         if self.mode == 'opt':
             try:
                 traci.trafficlight.setProgram(target_tls_id, "opt")
+                self._record_applied_tls(target_tls_id, "opt", "opt_mode_default")
                 print(f"\n  TLS {target_tls_id}: using optimized program 'opt' (opt mode)")
             except Exception as e:
                 print(f"\n  TLS {target_tls_id}: failed to set program - {e}")
@@ -674,6 +687,7 @@ class SUMODelayCalculator:
         if not hasattr(self, 'obstacle_info') or not self.obstacle_info:
             try:
                 traci.trafficlight.setProgram(target_tls_id, "org")
+                self._record_applied_tls(target_tls_id, "org", "dynamic_no_obstacle")
                 print(f"\n  TLS {target_tls_id}: no obstacles, using default program 'org'")
             except Exception as e:
                 print(f"\n  TLS {target_tls_id}: failed to set default program - {e}")
@@ -713,6 +727,7 @@ class SUMODelayCalculator:
                 # Use the lane_id as program ID if it exists
                 if matched_lane in available_programs:
                     traci.trafficlight.setProgram(target_tls_id, matched_lane)
+                    self._record_applied_tls(target_tls_id, matched_lane, "exact_lane_program")
                     print(f"  TLS: switched to lane-specific program '{matched_lane}'")
                 else:
                     # Fallback: find a program matching the obstacle's edge
@@ -724,14 +739,17 @@ class SUMODelayCalculator:
                             break
                     if edge_program:
                         traci.trafficlight.setProgram(target_tls_id, edge_program)
+                        self._record_applied_tls(target_tls_id, edge_program, "edge_program_fallback")
                         print(f"  TLS: exact lane program not found, "
                               f"using edge-based program '{edge_program}'")
                     else:
                         traci.trafficlight.setProgram(target_tls_id, "opt")
+                        self._record_applied_tls(target_tls_id, "opt", "opt_fallback")
                         print(f"  TLS: no lane-specific program for '{matched_lane}', "
                               f"falling back to 'opt'")
             else:
                 traci.trafficlight.setProgram(target_tls_id, "org")
+                self._record_applied_tls(target_tls_id, "org", "dynamic_obstacle_not_on_controlled_lane")
                 print(f"  TLS: no obstacle on controlled lanes, using default 'org'")
         except Exception as e:
             print(f"\n  TLS {target_tls_id}: failed to switch program - {e}")
@@ -869,7 +887,7 @@ class SUMODelayCalculator:
             if self.statistic_file:
                 sumo_cmd += ['--statistic-output', os.path.abspath(self.statistic_file)]
 
-            traci.start(sumo_cmd)
+            traci.start(sumo_cmd, numRetries=10)
             print("✓ SUMO started\n")
 
             # Zoom into the intersection area
@@ -913,7 +931,7 @@ class SUMODelayCalculator:
                 self.update_tls_program()
 
                 # Proactively trigger rerouting for congested vehicles
-                self.trigger_rerouting(step)
+                self.trigger_rerouting(step * self.step_length)
 
                 # Help vehicles stuck behind obstacles change lanes
                 self.assist_stuck_vehicles(step * self.step_length)
@@ -962,7 +980,12 @@ class SUMODelayCalculator:
                 'average_time_loss': 0,
                 'average_wait_time': 0,
                 'average_duration': 0,
-                'vehicle_count': 0
+                'vehicle_count': 0,
+                'total_time_loss': 0,
+                'total_wait_time': 0,
+                'simulation_time': self.sim_time,
+                'total_departed': len(self.vehicle_data),
+                'total_arrived': 0
             }
 
         total_duration = 0.0
@@ -1032,7 +1055,9 @@ class SUMODelayCalculator:
                     {'x': x, 'y': y, 'width': w, 'height': h, 'angle': a}
                     for x, y, w, h, a in self.obstacles
                 ],
-                'tls_program': self.tls_program if isinstance(self.tls_program, (dict, str)) else None,
+                'tls_program': self.applied_tls_program if self.applied_tls_program else (
+                    self.tls_program if isinstance(self.tls_program, (dict, str)) else None
+                ),
                 'simulation_time': self.sim_time,
                 'step_length': self.step_length
             },

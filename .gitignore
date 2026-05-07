@@ -41,3 +41,10 @@ san_jose_full_new/tmp_patch
 
 # Analysis output
 traffic_data_analysis/delay_result/
+traffic_data_analysis/tripinfo/
+
+# Simulation outputs (reproducible from scripts)
+outputs/
+
+# Local logs
+*.log
