@@ -37,6 +37,21 @@ except ImportError:
     print("and SUMO tools directory is in Python path")
     sys.exit(1)
 
+# Make TeraSim packages importable using a path relative to this file
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_TERASIM_ROOT = os.path.abspath(os.path.join(_HERE, "..", "TeraSim"))
+for _pkg in ("packages/terasim", "packages/terasim-nde-nade"):
+    _p = os.path.join(_TERASIM_ROOT, _pkg)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+try:
+    from terasim_nde_nade.adversity.static.stalled_object import StalledObjectAdversity
+except ImportError as _e:
+    print(f"Error: Unable to import StalledObjectAdversity from terasim_nde_nade: {_e}")
+    print(f"Expected TeraSim at: {_TERASIM_ROOT}")
+    sys.exit(1)
+
 
 class SUMODelayCalculator:
     """SUMO Delay Calculator - Using TraCI for dynamic control"""
@@ -84,6 +99,10 @@ class SUMODelayCalculator:
         self.vehicle_data = {}
         self.departed_vehicles = set()
         self.arrived_vehicles = set()
+
+        # Single source of truth for "which IDs are obstacles" — populated by
+        # add_obstacles_via_traci() and consulted by the per-step filters.
+        self.obstacle_ids = set()
 
         # Load network projection information
         self._load_network_projection()
@@ -177,102 +196,147 @@ class SUMODelayCalculator:
 
         print(f"✓ Configuration file created: {self.config_file}")
 
+    def _is_vehicle_lane(self, lane_id):
+        """Return True if the lane permits passenger cars (i.e. not a sidewalk or bike-only path)."""
+        try:
+            disallowed = set(traci.lane.getDisallowed(lane_id))
+            allowed = set(traci.lane.getAllowed(lane_id))
+        except Exception:
+            return False
+        if "passenger" in disallowed:
+            return False
+        # Empty `allowed` means "all classes allowed except those in disallow".
+        if allowed and "passenger" not in allowed:
+            return False
+        return True
+
+    def _snap_gps_to_vehicle_lane(self, lat, lon):
+        """Snap a GPS position to the nearest lane that actually allows passenger cars.
+
+        SUMO's convertRoad / _find_nearest_edge can return a pedestrian-only sidewalk
+        lane when the GPS lands near the curb (which is exactly where stalled vehicles
+        end up in reality). Placing an obstacle on a sidewalk lane silently breaks the
+        downstream "vehicles stuck behind obstacle" logic because no real cars share
+        that lane.
+
+        Returns (lane_id, lane_position) or (None, None) if no usable lane is found.
+        """
+        x, y = self.latlon_to_xy(lat, lon)
+        try:
+            edge_id, lane_pos, lane_idx = traci.simulation.convertRoad(x, y, isGeo=False)
+        except Exception as e:
+            print(f"    convertRoad failed: {e}")
+            return None, None
+        if not edge_id or edge_id.startswith(':'):
+            return None, None
+
+        candidate = f"{edge_id}_{lane_idx}"
+        if self._is_vehicle_lane(candidate):
+            return candidate, lane_pos
+
+        # The nearest lane is a sidewalk/bike path. Walk the edge's other lanes and
+        # pick the nearest vehicle lane. Lanes on the same edge are parallel, so the
+        # same lane_pos is a fine projection.
+        print(f"    Lane {candidate} is non-vehicle (sidewalk/bike), searching siblings...")
+        try:
+            n_lanes = traci.edge.getLaneNumber(edge_id)
+        except Exception:
+            return None, None
+        for li in range(n_lanes):
+            sibling = f"{edge_id}_{li}"
+            if sibling == candidate:
+                continue
+            if self._is_vehicle_lane(sibling):
+                print(f"      → snapped to {sibling}")
+                return sibling, lane_pos
+        return None, None
+
     def add_obstacles_via_traci(self):
-        """Add obstacles via TraCI - using stationary vehicles"""
+        """Add obstacles via TeraSim's StalledObjectAdversity in lane_position mode.
+
+        We pre-snap the LinkVision GPS to the nearest actual vehicle lane (filtering
+        out pedestrian/bike-only lanes), then hand the lane_id + position to
+        StalledObjectAdversity. This is cleaner than latlon_degree mode because:
+          - lane_index in obstacle_info reflects the *real* lane the obstacle blocks
+          - assist_stuck_vehicles / update_tls_program key off the correct lane
+          - no angle math needed — SUMO orients along the lane shape automatically
+        """
         if not self.obstacles:
             return
 
-        print(f"\nAdding obstacles (total: {len(self.obstacles)}):")
+        print(f"\nAdding obstacles via StalledObjectAdversity (total: {len(self.obstacles)}):")
 
-        # Store obstacle vehicle IDs and position information
+        self.obstacle_advs = []
+        # Kept for compatibility with assist_stuck_vehicles() which reads
+        # obstacle['id'/'edge'/'lane'] from this list.
         self.obstacle_vehicles = []
 
         for idx, (lat, lon, width, height, angle) in enumerate(self.obstacles):
-            obstacle_veh_id = f'obstacle_veh_{idx}'
-
             try:
-                # Convert latitude/longitude to SUMO coordinates
-                x, y = self.latlon_to_xy(lat, lon)
                 print(f"\n  Obstacle {idx}:")
                 print(f"    Lat/Lon: ({lat:.6f}, {lon:.6f})")
-                print(f"    SUMO coordinates: ({x:.2f}, {y:.2f})")
 
-                # Find nearest edge and lane
-                edge_id, lane_idx = self._find_nearest_edge(x, y)
+                lane_id, lane_pos = self._snap_gps_to_vehicle_lane(lat, lon)
+                if lane_id is None:
+                    print(f"    ✗ No usable vehicle lane found near this GPS, skipped")
+                    continue
+                print(f"    Snapped to {lane_id} at pos={lane_pos:.2f}m "
+                      f"(allowed: passenger cars OK)")
 
-                if edge_id:
-                    # If angle not specified, get lane angle
-                    if angle is None:
-                        lane_id = f"{edge_id}_{lane_idx}"
-                        lane_angle = traci.lane.getAngle(lane_id)
-                        angle = lane_angle
-                        print(f"    Auto-detected lane angle: {angle:.1f}°")
-                    else:
-                        print(f"    Using specified angle: {angle:.1f}°")
+                adv = StalledObjectAdversity(
+                    placement_mode="lane_position",
+                    lane_id=lane_id,
+                    lane_position=lane_pos,
+                    object_type="DEFAULT_VEHTYPE",
+                    start_time=0,
+                    end_time=-1,  # never auto-remove
+                )
+                if not adv.is_effective():
+                    print(f"    ✗ StalledObjectAdversity rejected the config, skipped")
+                    continue
 
-                    # Create a single-edge route for the obstacle
-                    obstacle_route_id = f'obstacle_route_{idx}'
-                    traci.route.add(obstacle_route_id, [edge_id])
+                adv.initialize(time=0)
 
-                    # Add vehicle
-                    traci.vehicle.add(
-                        vehID=obstacle_veh_id,
-                        routeID=obstacle_route_id,
-                        typeID='DEFAULT_VEHTYPE',
-                        depart='now',
-                        departLane=lane_idx,
-                        departPos='base',
-                        departSpeed='0'
-                    )
+                lane_idx_int = int(adv.lane_index) if str(adv.lane_index).isdigit() else 0
 
-                    # Move immediately to specified position
-                    traci.vehicle.moveToXY(
-                        vehID=obstacle_veh_id,
-                        edgeID=edge_id,
-                        laneIndex=lane_idx,
-                        x=x,
-                        y=y,
-                        angle=angle,
-                        keepRoute=2  # 2 means ignore route
-                    )
-
-                    # Set speed mode: disable all safety checks, allow complete stop
-                    traci.vehicle.setSpeedMode(obstacle_veh_id, 0)
-                    # Disable all lane change behavior
-                    traci.vehicle.setLaneChangeMode(obstacle_veh_id, 0)
-
-                    # Set speed to 0
-                    traci.vehicle.setSpeed(obstacle_veh_id, 0)
-
-                    # Change vehicle color to red to indicate obstacle
-                    traci.vehicle.setColor(obstacle_veh_id, (255, 0, 0, 255))
-
-                    # Prevent SUMO from removing the vehicle due to route completion
-                    stop_lane_id = f"{edge_id}_{lane_idx}"
+                # StalledObjectAdversity (lane_position mode) does NOT call setStop.
+                # When the obstacle is near the end of its single-edge route — which
+                # is exactly the case when LinkVision detects a car right at the
+                # intersection entry — SUMO will mark the route complete on the next
+                # step and auto-remove the vehicle. Pin it with a long-duration stop
+                # at the end of the lane, mirroring what the pre-TeraSim hand-rolled
+                # code did, so the vehicle stays put for the whole sim.
+                try:
+                    lane_length = traci.lane.getLength(lane_id)
                     traci.vehicle.setStop(
-                        obstacle_veh_id,
-                        edgeID=edge_id,
-                        pos=traci.lane.getLength(stop_lane_id),
-                        laneIndex=lane_idx,
-                        duration=2**31 - 1
+                        adv.stalled_object_id,
+                        edgeID=adv.edge_id,
+                        pos=lane_length,
+                        laneIndex=lane_idx_int,
+                        duration=2**31 - 1,
                     )
+                except Exception as e:
+                    print(f"    ! setStop failed (vehicle may be auto-removed later): {e}")
 
-                    # Save obstacle information
-                    self.obstacle_vehicles.append({
-                        'id': obstacle_veh_id,
-                        'x': x,
-                        'y': y,
-                        'angle': angle,
-                        'edge': edge_id,
-                        'lane': lane_idx
-                    })
+                # Color the spawned vehicle red so it's visually identifiable
+                try:
+                    traci.vehicle.setColor(adv.stalled_object_id, (255, 0, 0, 255))
+                except Exception:
+                    pass
 
-                    print(f"    ✓ Obstacle vehicle added")
-                else:
-                    print(f"    ✗ Could not find suitable road position")
+                self.obstacle_advs.append(adv)
+                self.obstacle_vehicles.append({
+                    'id':    adv.stalled_object_id,
+                    'edge':  adv.edge_id,
+                    'lane':  lane_idx_int,
+                })
+                self.obstacle_ids.add(adv.stalled_object_id)
+
+                print(f"    ✓ Obstacle vehicle placed: id={adv.stalled_object_id}, "
+                      f"edge={adv.edge_id}, lane={lane_idx_int}")
 
             except Exception as e:
-                print(f"  ✗ Failed to add obstacle vehicle {idx}: {e}")
+                print(f"  ✗ Failed to add obstacle {idx}: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -407,31 +471,26 @@ class SUMODelayCalculator:
             return None, 0
 
     def update_obstacle_positions(self):
-        """Update obstacle positions each step to keep them stationary"""
-        if not hasattr(self, 'obstacle_vehicles'):
+        """Re-pin obstacles each step via StalledObjectAdversity.update().
+
+        Rebuilds self.obstacle_info on every call because update_tls_program()
+        reads it to decide which TLS program to apply.
+        """
+        if not hasattr(self, 'obstacle_advs'):
             return
 
-
-        self.obstacle_info = []  # Store info of the last successfully updated obstacle
-        for obs in self.obstacle_vehicles:
+        current_time = traci.simulation.getTime()
+        self.obstacle_info = []
+        for adv in self.obstacle_advs:
             try:
-                # Check if vehicle is still in simulation
-                if obs['id'] in traci.vehicle.getIDList():
-                    # Force move to original position
-                    traci.vehicle.moveToXY(
-                        vehID=obs['id'],
-                        edgeID=obs['edge'],
-                        laneIndex=obs['lane'],
-                        x=obs['x'],
-                        y=obs['y'],
-                        angle=obs['angle'],
-                        keepRoute=2
-                    )
-
-                    # Ensure speed is 0
-                    traci.vehicle.setSpeed(obs['id'], 0)
-                    self.obstacle_info.append(obs)
-            except:
+                adv.update(time=current_time)
+                if adv.stalled_object_id in traci.vehicle.getIDList():
+                    self.obstacle_info.append({
+                        'id':   adv.stalled_object_id,
+                        'edge': adv.edge_id,
+                        'lane': int(adv.lane_index) if str(adv.lane_index).isdigit() else 0,
+                    })
+            except Exception:
                 pass
 
     def trigger_rerouting(self, current_time):
@@ -450,7 +509,7 @@ class SUMODelayCalculator:
 
         for veh_id in vehicle_ids:
             # Skip obstacle vehicles
-            if veh_id.startswith('obstacle_veh_'):
+            if veh_id in self.obstacle_ids:
                 continue
 
             try:
@@ -553,7 +612,7 @@ class SUMODelayCalculator:
         currently_stuck = set()
 
         for veh_id in veh_id_list:
-            if veh_id.startswith('obstacle_veh_'):
+            if veh_id in self.obstacle_ids:
                 continue
 
             try:
@@ -628,7 +687,7 @@ class SUMODelayCalculator:
 
         vehicle_ids = traci.vehicle.getIDList()
         for veh_id in vehicle_ids:
-            if veh_id.startswith('obstacle_veh_'):
+            if veh_id in self.obstacle_ids:
                 continue
             try:
                 waiting_time = traci.vehicle.getWaitingTime(veh_id)
@@ -833,7 +892,7 @@ class SUMODelayCalculator:
 
         for veh_id in vehicle_ids:
             # Skip obstacle vehicles
-            if veh_id.startswith('obstacle_veh_'):
+            if veh_id in self.obstacle_ids:
                 continue
 
             if veh_id not in self.vehicle_data:
