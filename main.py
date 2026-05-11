@@ -890,13 +890,10 @@ class SUMODelayCalculator:
             traci.start(sumo_cmd, numRetries=10)
             print("✓ SUMO started\n")
 
-            # Zoom into the intersection area
-            if self.gui:
-                # Center on the intersection (average of obstacle coords)
-                center_x, center_y = self.latlon_to_xy(37.3356, -121.8921)
-                traci.gui.setOffset("View #0", center_x, center_y)
-                traci.gui.setZoom("View #0", 350)
-                traci.gui.setAngle("View #0", 60.0)
+            # Zoom/offset/angle handling intentionally left to the user.
+            # Previous version forced a 60-degree rotation + fixed center which
+            # caused a visible "flash" when the simulation started — preserve
+            # whatever view the user has manually configured instead.
 
             # Add obstacles
             self.add_obstacles_via_traci()
