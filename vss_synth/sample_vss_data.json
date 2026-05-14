@@ -1,0 +1,29 @@
+{
+  "corridor_id": "santa_clara_st",
+  "observation_interval": "1h",
+  "timestamp_start": "2026-03-15T08:00:00",
+  "intersections": [
+    {
+      "intersection_id": "market_santa_clara",
+      "lat": 37.33548,
+      "lon": -121.89205,
+      "counts": {
+        "EB": { "left": 80, "through": 220, "right": 100 },
+        "WB": { "left": 80, "through": 220, "right": 100 },
+        "NB": { "left": 40, "through": 110, "right": 50  },
+        "SB": { "left": 40, "through": 110, "right": 50  }
+      }
+    },
+    {
+      "intersection_id": "1st_santa_clara",
+      "lat": 37.336169,
+      "lon": -121.890590,
+      "counts": {
+        "EB": { "left": 80, "through": 220, "right": 100 },
+        "WB": { "left": 80, "through": 220, "right": 100 },
+        "NB": { "left": 40, "through": 110, "right": 50  },
+        "SB": { "left": 40, "through": 110, "right": 50  }
+      }
+    }
+  ]
+}
