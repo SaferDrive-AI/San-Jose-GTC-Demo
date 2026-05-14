@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+"""CLI entrypoint for replaying LinkVision events in SUMO and comparing modes."""
 
 import argparse
 import json

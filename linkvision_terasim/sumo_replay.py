@@ -1,4 +1,9 @@
 from __future__ import annotations
+"""Replay converted LinkVision events directly in SUMO.
+
+Provides helpers to load calibrated events, choose replay targets, assemble
+benchmark/dynamic run commands, and execute case comparisons.
+"""
 
 import subprocess
 from dataclasses import dataclass
@@ -129,4 +134,3 @@ def run_replay_cases(cases: Iterable[ReplayCase]) -> None:
     for case in cases:
         case.output_path.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(case.command, check=True)
-

@@ -1,3 +1,5 @@
+"""Unit tests for stalled-lane signal plan selection rules."""
+
 import unittest
 
 from linkvision_terasim.signal_optimizer import (

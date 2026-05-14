@@ -1,4 +1,9 @@
 from __future__ import annotations
+"""Run LinkVision-derived stalled-vehicle scenarios through TeraSim.
+
+This module prepares SUMO/TeraSim compatibility inputs, configures replay
+parameters, and launches either benchmark or dynamic replay runs.
+"""
 
 import sys
 from dataclasses import dataclass

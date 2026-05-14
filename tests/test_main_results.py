@@ -1,3 +1,5 @@
+"""Smoke tests for demo main scripts and result artifact generation."""
+
 import unittest
 
 from main import SUMODelayCalculator

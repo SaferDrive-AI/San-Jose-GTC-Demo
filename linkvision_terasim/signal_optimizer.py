@@ -1,4 +1,9 @@
 from __future__ import annotations
+"""Signal-plan selection rules for blocked-lane demo scenarios.
+
+Given obstacle context (lane or direction), this module picks the most
+specific available TLS program and records the selection reason.
+"""
 
 from dataclasses import dataclass
 from typing import Iterable

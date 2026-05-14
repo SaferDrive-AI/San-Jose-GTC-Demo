@@ -1,3 +1,5 @@
+"""Unit tests for SUMO replay case selection and command generation."""
+
 import sys
 import unittest
 from pathlib import Path

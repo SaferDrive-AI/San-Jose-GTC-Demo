@@ -1,3 +1,5 @@
+"""Unit tests for TeraSim replay runner configuration and I/O helpers."""
+
 import tempfile
 import unittest
 from pathlib import Path

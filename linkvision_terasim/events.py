@@ -1,4 +1,9 @@
 from __future__ import annotations
+"""Convert raw LinkVision payloads into normalized replay events.
+
+Includes camera calibration loading, homography-based geo projection, and
+filtering utilities to produce SUMO/TeraSim-ready stalled-vehicle events.
+"""
 
 import json
 from dataclasses import dataclass
@@ -217,4 +222,3 @@ def event_to_obstacle_arg(event: RealWorldStalledVehicleEvent) -> str:
 
 def events_to_obstacle_arg(events: Iterable[RealWorldStalledVehicleEvent]) -> str:
     return ";".join(event_to_obstacle_arg(event) for event in events)
-

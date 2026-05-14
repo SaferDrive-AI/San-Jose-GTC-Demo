@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+"""CLI entrypoint for running LinkVision event replay in TeraSim."""
 
 import argparse
 import json

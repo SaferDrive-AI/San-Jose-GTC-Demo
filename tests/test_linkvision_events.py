@@ -1,3 +1,5 @@
+"""Unit tests for LinkVision event parsing and calibration utilities."""
+
 import tempfile
 import unittest
 from pathlib import Path
