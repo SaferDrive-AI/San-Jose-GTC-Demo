@@ -185,10 +185,35 @@ def map_intersections(net, data, max_dist_m: float):
             results.append(entry)
             continue
 
-        best = cands[0]
-        node = net.getNode(best["node_id"])
-        dist = float(best["distance_m"])
-        approaches = build_approaches(net, node)
+        # Junction-first matching:
+        # choose the best candidate by direction coverage + topology quality,
+        # then use distance only as a tie-breaker (instead of nearest-node only).
+        expected_dirs = {d for d, tc in counts.items() if float(sum(float(tc.get(t, 0.0)) for t in TURNS)) > 0}
+        ranked = []
+        for cand in cands:
+            node = net.getNode(cand["node_id"])
+            approaches = build_approaches(net, node)
+            mapped_dirs = set(approaches.keys())
+            overlap = len(expected_dirs & mapped_dirs)
+            # More mapped approaches and more legal movements indicate a better junction fit.
+            movement_cnt = sum(len(v.get("movements", {})) for v in approaches.values())
+            incoming_cnt = len([e for e in node.getIncoming() if not e.getID().startswith(":") and e.allows("passenger")])
+            dist = float(cand["distance_m"])
+            ranked.append(
+                (
+                    overlap,
+                    movement_cnt,
+                    incoming_cnt,
+                    -dist,
+                    cand["node_id"],
+                    dist,
+                    approaches,
+                )
+            )
+
+        ranked.sort(reverse=True)
+        _ov, _mv, _inc, _negd, best_node_id, dist, approaches = ranked[0]
+        node = net.getNode(best_node_id)
 
         entry["matched_node_id"] = node.getID()
         entry["distance_to_node_m"] = dist
@@ -212,7 +237,21 @@ def _angle_diff(a: float, b: float) -> float:
     return min((a - b) % 360.0, (b - a) % 360.0)
 
 
-def _min_hops_from_sources_to_target(net, source_edges: set[str], target_edge: str, max_hops: int = 12):
+def _axis_angle_diff_deg(heading: float, axis_heading: float) -> float:
+    """Return smallest angle between heading and an undirected axis."""
+    d1 = _angle_diff(heading, axis_heading)
+    d2 = _angle_diff(heading, (axis_heading + 180.0) % 360.0)
+    return min(d1, d2)
+
+
+def _min_hops_from_sources_to_target(
+    net,
+    source_edges: set[str],
+    target_edge: str,
+    max_hops: int = 12,
+    corridor_axis_bearing: float | None = None,
+    axis_thresh_deg: float = 45.0,
+):
     q = deque()
     visited = set()
     for s in source_edges:
@@ -229,6 +268,10 @@ def _min_hops_from_sources_to_target(net, source_edges: set[str], target_edge: s
             oid = out_edge.getID()
             if oid.startswith(":") or not conns:
                 continue
+            if corridor_axis_bearing is not None:
+                h = edge_heading_out_of_node(out_edge)
+                if _axis_angle_diff_deg(h, corridor_axis_bearing) > axis_thresh_deg:
+                    continue
             if oid in visited:
                 continue
             visited.add(oid)
@@ -236,11 +279,32 @@ def _min_hops_from_sources_to_target(net, source_edges: set[str], target_edge: s
     return None
 
 
-def identify_internal_inflows(net, mapped_results, angle_thresh_deg: float = 55.0, max_dist_m: float = 700.0, max_hops: int = 10):
+def identify_internal_inflows(
+    net,
+    mapped_results,
+    angle_thresh_deg: float = 55.0,
+    max_dist_m: float = 700.0,
+    max_hops: int = 6,
+    axis_thresh_deg: float = 45.0,
+):
     matched = [r for r in mapped_results if r["status"] == "matched"]
     by_id = {r["intersection_id"]: r for r in matched}
     source_edges = {r["intersection_id"]: {info["edge_id"] for info in r["approaches"].values()} for r in matched}
     internal = {r["intersection_id"]: set() for r in matched}
+    corridor_axis_bearing = None
+    if len(matched) >= 2:
+        # Estimate corridor axis from the farthest pair of mapped intersections.
+        pts = [(r["intersection_id"], net.getNode(r["matched_node_id"]).getCoord()) for r in matched]
+        best_pair = None
+        best_dist = -1.0
+        for i in range(len(pts)):
+            for j in range(i + 1, len(pts)):
+                d = math.dist(pts[i][1], pts[j][1])
+                if d > best_dist:
+                    best_dist = d
+                    best_pair = (pts[i][1], pts[j][1])
+        if best_pair is not None:
+            corridor_axis_bearing = _bearing_between(best_pair[0], best_pair[1])
 
     for r in matched:
         iid = r["intersection_id"]
@@ -264,7 +328,14 @@ def identify_internal_inflows(net, mapped_results, angle_thresh_deg: float = 55.
             candidates.sort(key=lambda x: (x[1], x[2]))
 
             for oid, _dist, _ad in candidates:
-                hops = _min_hops_from_sources_to_target(net, source_edges[oid], target_edge, max_hops=max_hops)
+                hops = _min_hops_from_sources_to_target(
+                    net,
+                    source_edges[oid],
+                    target_edge,
+                    max_hops=max_hops,
+                    corridor_axis_bearing=corridor_axis_bearing,
+                    axis_thresh_deg=axis_thresh_deg,
+                )
                 if hops is not None:
                     internal[iid].add(d)
                     break
@@ -272,8 +343,171 @@ def identify_internal_inflows(net, mapped_results, angle_thresh_deg: float = 55.
     return internal
 
 
-def build_boundary_json(net, original, mapped_results):
-    internal_dirs = identify_internal_inflows(net, mapped_results)
+def _estimate_corridor_axis_and_endpoint_ids(net, matched_rows):
+    if len(matched_rows) < 2:
+        return None, None, None
+    pts = [(r["intersection_id"], net.getNode(r["matched_node_id"]).getCoord()) for r in matched_rows]
+    best = None
+    best_d = -1.0
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            d = math.dist(pts[i][1], pts[j][1])
+            if d > best_d:
+                best_d = d
+                best = (pts[i], pts[j])
+    if best is None:
+        return None, None, None
+    (id_a, axy), (id_b, bxy) = best
+    axis = _bearing_between(axy, bxy)
+    return axis, id_a, id_b
+
+
+def _junction_order_boundary_dirs(
+    net,
+    mapped_results,
+    endpoint_angle_thresh_deg: float = 65.0,
+    max_hops: int = 8,
+    axis_thresh_deg: float = 45.0,
+):
+    matched = [r for r in mapped_results if r["status"] == "matched"]
+    keep = {r["intersection_id"]: set() for r in matched}
+    if not matched:
+        return keep
+    if len(matched) == 1:
+        iid = matched[0]["intersection_id"]
+        keep[iid] = set(matched[0]["approaches"].keys())
+        return keep
+
+    axis, _, _ = _estimate_corridor_axis_and_endpoint_ids(net, matched)
+    if axis is None:
+        return keep
+
+    by_id = {r["intersection_id"]: r for r in matched}
+    # Build junction connectivity graph under corridor constraints.
+    edge_sources = {iid: {info["edge_id"] for info in row["approaches"].values()} for iid, row in by_id.items()}
+    iids = [r["intersection_id"] for r in matched]
+    adj = {iid: set() for iid in iids}
+    for i in range(len(iids)):
+        for j in range(i + 1, len(iids)):
+            a, b = iids[i], iids[j]
+            # a -> b connectivity
+            reachable_ab = False
+            for te in edge_sources[b]:
+                hops = _min_hops_from_sources_to_target(
+                    net,
+                    edge_sources[a],
+                    te,
+                    max_hops=max_hops,
+                    corridor_axis_bearing=axis,
+                    axis_thresh_deg=axis_thresh_deg,
+                )
+                if hops is not None:
+                    reachable_ab = True
+                    break
+            # b -> a connectivity
+            reachable_ba = False
+            for te in edge_sources[a]:
+                hops = _min_hops_from_sources_to_target(
+                    net,
+                    edge_sources[b],
+                    te,
+                    max_hops=max_hops,
+                    corridor_axis_bearing=axis,
+                    axis_thresh_deg=axis_thresh_deg,
+                )
+                if hops is not None:
+                    reachable_ba = True
+                    break
+            if reachable_ab or reachable_ba:
+                adj[a].add(b)
+                adj[b].add(a)
+
+    # Boundary junctions are endpoints in each connected component (degree <= 1).
+    visited = set()
+    endpoint_ids = set()
+    for iid in iids:
+        if iid in visited:
+            continue
+        q = deque([iid])
+        comp = []
+        visited.add(iid)
+        while q:
+            cur = q.popleft()
+            comp.append(cur)
+            for nx in adj[cur]:
+                if nx not in visited:
+                    visited.add(nx)
+                    q.append(nx)
+        if len(comp) == 1:
+            endpoint_ids.add(comp[0])
+            continue
+        deg1 = [x for x in comp if len(adj[x]) <= 1]
+        if deg1:
+            endpoint_ids.update(deg1)
+        else:
+            # fallback for cyclic component: use farthest pair as pseudo-endpoints
+            pts = [(x, net.getNode(by_id[x]["matched_node_id"]).getCoord()) for x in comp]
+            best = None
+            best_d = -1.0
+            for i in range(len(pts)):
+                for j in range(i + 1, len(pts)):
+                    d = math.dist(pts[i][1], pts[j][1])
+                    if d > best_d:
+                        best_d = d
+                        best = (pts[i][0], pts[j][0])
+            if best:
+                endpoint_ids.update(best)
+
+    # Keep only outward approaches at boundary endpoints.
+    for endpoint_id in endpoint_ids:
+        row = by_id.get(endpoint_id)
+        if not row:
+            continue
+        exy = net.getNode(row["matched_node_id"]).getCoord()
+        # Outward is opposite of direction to component centroid.
+        comp_ids = adj[endpoint_id] | {endpoint_id}
+        cxy = [net.getNode(by_id[x]["matched_node_id"]).getCoord() for x in comp_ids]
+        cx = sum(x for x, _ in cxy) / len(cxy)
+        cy = sum(y for _, y in cxy) / len(cxy)
+        inward = _bearing_between(exy, (cx, cy))
+        outward = (inward + 180.0) % 360.0
+        for d, info in row["approaches"].items():
+            source_bearing = (info["heading"] + 180.0) % 360.0
+            if _angle_diff(source_bearing, outward) <= endpoint_angle_thresh_deg:
+                keep[endpoint_id].add(d)
+
+    return keep
+
+
+def build_boundary_json(
+    net,
+    original,
+    mapped_results,
+    internal_max_hops: int,
+    internal_axis_thresh_deg: float,
+    boundary_mode: str,
+):
+    if boundary_mode == "junction_order":
+        keep_dirs = _junction_order_boundary_dirs(
+            net,
+            mapped_results,
+            max_hops=internal_max_hops,
+            axis_thresh_deg=internal_axis_thresh_deg,
+        )
+        internal_dirs = {}
+        for r in mapped_results:
+            if r["status"] != "matched":
+                continue
+            iid = r["intersection_id"]
+            all_dirs = set(r["approaches"].keys())
+            internal_dirs[iid] = all_dirs - keep_dirs.get(iid, set())
+    else:
+        internal_dirs = identify_internal_inflows(
+            net,
+            mapped_results,
+            max_hops=internal_max_hops,
+            axis_thresh_deg=internal_axis_thresh_deg,
+        )
     mapped_by_id = {r["intersection_id"]: r for r in mapped_results}
 
     out = {
@@ -802,7 +1036,9 @@ def main():
     ap.add_argument("--statistic-out", required=True)
     ap.add_argument("--sim-end", type=int, default=1800)
     ap.add_argument("--max-match-distance-m", type=float, default=60.0)
-    ap.add_argument("--max-corridor-hops", type=int, default=12)
+    ap.add_argument("--max-corridor-hops", type=int, default=8)
+    ap.add_argument("--internal-axis-thresh-deg", type=float, default=45.0)
+    ap.add_argument("--boundary-mode", choices=["graph", "junction_order"], default="junction_order")
     ap.add_argument("--exit-hops", type=int, default=3)
     ap.add_argument("--flow-scale", type=float, default=0.35)
     ap.add_argument("--min-route-edges", type=int, default=5)
@@ -817,7 +1053,14 @@ def main():
     net = sumolib.net.readNet(args.net_file, withInternal=True)
 
     mapped = map_intersections(net, original, max_dist_m=args.max_match_distance_m)
-    boundary_json = build_boundary_json(net, original, mapped)
+    boundary_json = build_boundary_json(
+        net,
+        original,
+        mapped,
+        internal_max_hops=args.max_corridor_hops,
+        internal_axis_thresh_deg=args.internal_axis_thresh_deg,
+        boundary_mode=args.boundary_mode,
+    )
     Path(args.boundary_json_out).write_text(json.dumps(boundary_json, indent=2), encoding="utf-8")
 
     patterns = build_patterns(
