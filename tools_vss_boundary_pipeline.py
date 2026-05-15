@@ -1,18 +1,17 @@
 #!/usr/bin/env python
 from __future__ import annotations
-"""Build deterministic SUMO flows from VSS intersection counts.
+"""Build deterministic SUMO route flows from VSS intersection counts.
 
 Pipeline stages:
 1) map VSS lat/lon intersections to SUMO nodes/approaches,
 2) remove internal duplicate inflows and keep boundary injection roots,
 3) expand deterministic turn patterns into fixed edge routes,
-4) emit SUMO route/flow XML and run quick simulation sanity checks.
+4) emit SUMO route/flow XML.
 """
 
 import argparse
 import json
 import math
-import subprocess
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
@@ -227,60 +226,48 @@ def map_intersections(net, data, max_dist_m: float):
     return results
 
 
-def _bearing_between(a_xy, b_xy) -> float:
-    ax, ay = a_xy
-    bx, by = b_xy
-    return heading_deg(bx - ax, by - ay)
-
-
 def _angle_diff(a: float, b: float) -> float:
     return min((a - b) % 360.0, (b - a) % 360.0)
 
 
-def _axis_angle_diff_deg(heading: float, axis_heading: float) -> float:
-    """Return smallest angle between heading and an undirected axis."""
-    d1 = _angle_diff(heading, axis_heading)
-    d2 = _angle_diff(heading, (axis_heading + 180.0) % 360.0)
-    return min(d1, d2)
+def _is_major_junction(node) -> bool:
+    """Return whether a SUMO node should stop camera-to-camera expansion."""
+    return node.getID().startswith("cluster_")
 
 
-def _min_hops_from_sources_to_target(
+def _first_upstream_major_junction(
     net,
-    source_edges: set[str],
-    target_edge: str,
-    max_hops: int = 12,
-    corridor_axis_bearing: float | None = None,
-    axis_thresh_deg: float = 45.0,
-    corridor_axis_bearings: list[float] | None = None,
-):
-    q = deque()
-    visited = set()
-    for s in source_edges:
-        q.append((s, 0))
-        visited.add(s)
+    edge_id: str,
+    origin_node_id: str,
+    max_hops: int,
+    direction_thresh_deg: float = 35.0,
+) -> str | None:
+    start = net.getEdge(edge_id)
+    base_heading = edge_heading_into_node(start)
+    q = deque([(edge_id, 0)])
+    visited = {edge_id}
     while q:
         eid, hops = q.popleft()
-        if eid == target_edge:
-            return hops
+        edge = net.getEdge(eid)
+        from_node = edge.getFromNode()
+        if from_node.getID() != origin_node_id and _is_major_junction(from_node):
+            return from_node.getID()
         if hops >= max_hops:
             continue
-        edge = net.getEdge(eid)
-        for out_edge, conns in edge.getOutgoing().items():
-            oid = out_edge.getID()
-            if oid.startswith(":") or not conns:
+        for prev_edge, conns in edge.getIncoming().items():
+            pid = prev_edge.getID()
+            if pid.startswith(":") or not conns or not prev_edge.allows("passenger"):
                 continue
-            if corridor_axis_bearings is not None:
-                h = edge_heading_out_of_node(out_edge)
-                if min(_axis_angle_diff_deg(h, ax) for ax in corridor_axis_bearings) > axis_thresh_deg:
-                    continue
-            elif corridor_axis_bearing is not None:
-                h = edge_heading_out_of_node(out_edge)
-                if _axis_angle_diff_deg(h, corridor_axis_bearing) > axis_thresh_deg:
-                    continue
-            if oid in visited:
+            if pid in visited:
                 continue
-            visited.add(oid)
-            q.append((oid, hops + 1))
+            if pid.lstrip("-") == eid.lstrip("-") and pid != eid:
+                continue
+            # Keep the search directed. Using an undirected axis here lets the
+            # reverse road segment masquerade as an upstream continuation.
+            if _angle_diff(edge_heading_into_node(prev_edge), base_heading) > direction_thresh_deg:
+                continue
+            visited.add(pid)
+            q.append((pid, hops + 1))
     return None
 
 
@@ -293,293 +280,21 @@ def identify_internal_inflows(
     axis_thresh_deg: float = 45.0,
 ):
     matched = [r for r in mapped_results if r["status"] == "matched"]
-    by_id = {r["intersection_id"]: r for r in matched}
-    source_edges = {r["intersection_id"]: {info["edge_id"] for info in r["approaches"].values()} for r in matched}
     internal = {r["intersection_id"]: set() for r in matched}
-    corridor_axis_bearing = None
-    if len(matched) >= 2:
-        # Estimate corridor axis from the farthest pair of mapped intersections.
-        pts = [(r["intersection_id"], net.getNode(r["matched_node_id"]).getCoord()) for r in matched]
-        best_pair = None
-        best_dist = -1.0
-        for i in range(len(pts)):
-            for j in range(i + 1, len(pts)):
-                d = math.dist(pts[i][1], pts[j][1])
-                if d > best_dist:
-                    best_dist = d
-                    best_pair = (pts[i][1], pts[j][1])
-        if best_pair is not None:
-            corridor_axis_bearing = _bearing_between(best_pair[0], best_pair[1])
+    camera_by_node = {r["matched_node_id"]: r["intersection_id"] for r in matched}
 
     for r in matched:
         iid = r["intersection_id"]
-        ixy = net.getNode(r["matched_node_id"]).getCoord()
         for d, info in r["approaches"].items():
-            target_edge = info["edge_id"]
-            source_bearing = (info["heading"] + 180.0) % 360.0
-
-            candidates = []
-            for oid, other in by_id.items():
-                if oid == iid:
-                    continue
-                oxy = net.getNode(other["matched_node_id"]).getCoord()
-                dist = math.dist(ixy, oxy)
-                if dist > max_dist_m:
-                    continue
-                b = _bearing_between(ixy, oxy)
-                ad = _angle_diff(source_bearing, b)
-                if ad <= angle_thresh_deg:
-                    candidates.append((oid, dist, ad))
-            candidates.sort(key=lambda x: (x[1], x[2]))
-
-            for oid, _dist, _ad in candidates:
-                hops = _min_hops_from_sources_to_target(
-                    net,
-                    source_edges[oid],
-                    target_edge,
-                    max_hops=max_hops,
-                    corridor_axis_bearing=corridor_axis_bearing,
-                    axis_thresh_deg=axis_thresh_deg,
-                )
-                if hops is not None:
-                    internal[iid].add(d)
-                    break
-
-    return internal
-
-
-def _estimate_corridor_axis_and_endpoint_ids(net, matched_rows):
-    if len(matched_rows) < 2:
-        return None, None, None
-    pts = [(r["intersection_id"], net.getNode(r["matched_node_id"]).getCoord()) for r in matched_rows]
-    best = None
-    best_d = -1.0
-    for i in range(len(pts)):
-        for j in range(i + 1, len(pts)):
-            d = math.dist(pts[i][1], pts[j][1])
-            if d > best_d:
-                best_d = d
-                best = (pts[i], pts[j])
-    if best is None:
-        return None, None, None
-    (id_a, axy), (id_b, bxy) = best
-    axis = _bearing_between(axy, bxy)
-    return axis, id_a, id_b
-
-
-def _junction_order_boundary_dirs(
-    net,
-    mapped_results,
-    endpoint_angle_thresh_deg: float = 65.0,
-    max_hops: int = 8,
-    axis_thresh_deg: float = 45.0,
-):
-    matched = [r for r in mapped_results if r["status"] == "matched"]
-    keep = {r["intersection_id"]: set() for r in matched}
-    if not matched:
-        return keep
-    if len(matched) == 1:
-        iid = matched[0]["intersection_id"]
-        keep[iid] = set(matched[0]["approaches"].keys())
-        return keep
-
-    global_axis, _, _ = _estimate_corridor_axis_and_endpoint_ids(net, matched)
-    if global_axis is None:
-        return keep
-    dual_axes = [global_axis, (global_axis + 90.0) % 360.0]
-
-    by_id = {r["intersection_id"]: r for r in matched}
-    # Build junction connectivity graph under corridor constraints.
-    edge_sources = {iid: {info["edge_id"] for info in row["approaches"].values()} for iid, row in by_id.items()}
-    iids = [r["intersection_id"] for r in matched]
-    adj = {iid: set() for iid in iids}
-    for i in range(len(iids)):
-        for j in range(i + 1, len(iids)):
-            a, b = iids[i], iids[j]
-            # a -> b connectivity
-            reachable_ab = False
-            for te in edge_sources[b]:
-                hops = _min_hops_from_sources_to_target(
-                    net,
-                    edge_sources[a],
-                    te,
-                    max_hops=max_hops,
-                    corridor_axis_bearings=dual_axes,
-                    axis_thresh_deg=axis_thresh_deg,
-                )
-                if hops is not None:
-                    reachable_ab = True
-                    break
-            # b -> a connectivity
-            reachable_ba = False
-            for te in edge_sources[a]:
-                hops = _min_hops_from_sources_to_target(
-                    net,
-                    edge_sources[b],
-                    te,
-                    max_hops=max_hops,
-                    corridor_axis_bearings=dual_axes,
-                    axis_thresh_deg=axis_thresh_deg,
-                )
-                if hops is not None:
-                    reachable_ba = True
-                    break
-            if reachable_ab or reachable_ba:
-                adj[a].add(b)
-                adj[b].add(a)
-
-    # Boundary junctions are endpoints in each connected component (degree <= 1).
-    visited = set()
-    endpoint_ids = set()
-    for iid in iids:
-        if iid in visited:
-            continue
-        q = deque([iid])
-        comp = []
-        visited.add(iid)
-        while q:
-            cur = q.popleft()
-            comp.append(cur)
-            for nx in adj[cur]:
-                if nx not in visited:
-                    visited.add(nx)
-                    q.append(nx)
-        if len(comp) == 1:
-            endpoint_ids.add(comp[0])
-            continue
-        deg1 = [x for x in comp if len(adj[x]) <= 1]
-        if deg1:
-            endpoint_ids.update(deg1)
-        else:
-            # fallback for cyclic component: use farthest pair as pseudo-endpoints
-            pts = [(x, net.getNode(by_id[x]["matched_node_id"]).getCoord()) for x in comp]
-            best = None
-            best_d = -1.0
-            for i in range(len(pts)):
-                for j in range(i + 1, len(pts)):
-                    d = math.dist(pts[i][1], pts[j][1])
-                    if d > best_d:
-                        best_d = d
-                        best = (pts[i][0], pts[j][0])
-            if best:
-                endpoint_ids.update(best)
-
-    # Keep outward approaches at boundary endpoints using local edge tangents:
-    # for each endpoint, estimate the local chain direction from neighboring
-    # endpoint-adjacent junctions, then allow dual local axes (tangent + orthogonal).
-    global_dual_axes = [global_axis, (global_axis + 90.0) % 360.0]
-    for endpoint_id in endpoint_ids:
-        row = by_id.get(endpoint_id)
-        if not row:
-            continue
-        exy = net.getNode(row["matched_node_id"]).getCoord()
-        # Outward baseline is opposite of direction to component centroid.
-        comp_ids = adj[endpoint_id] | {endpoint_id}
-        cxy = [net.getNode(by_id[x]["matched_node_id"]).getCoord() for x in comp_ids]
-        cx = sum(x for x, _ in cxy) / len(cxy)
-        cy = sum(y for _, y in cxy) / len(cxy)
-        inward = _bearing_between(exy, (cx, cy))
-        outward = (inward + 180.0) % 360.0
-        # Local axis from connected junction direction if available.
-        local_axis = None
-        if adj.get(endpoint_id):
-            nxy = net.getNode(by_id[next(iter(adj[endpoint_id]))]["matched_node_id"]).getCoord()
-            local_axis = _bearing_between(exy, nxy)
-        if local_axis is None:
-            local_axis = global_axis
-        local_dual = [local_axis, (local_axis + 90.0) % 360.0]
-        outward_dual = [outward, (outward + 90.0) % 360.0]
-        for d, info in row["approaches"].items():
-            source_bearing = (info["heading"] + 180.0) % 360.0
-            # Accept if the approach aligns with any outward candidate axis.
-            # Also require that it is not completely orthogonal to the global
-            # corridor basis to avoid arbitrary side-road spill-in.
-            outward_ok = min(_angle_diff(source_bearing, ax) for ax in outward_dual) <= endpoint_angle_thresh_deg
-            corridor_ok = min(_axis_angle_diff_deg(source_bearing, ax) for ax in local_dual) <= endpoint_angle_thresh_deg
-            global_ok = min(_axis_angle_diff_deg(source_bearing, ax) for ax in global_dual_axes) <= (endpoint_angle_thresh_deg + 10.0)
-            if outward_ok and corridor_ok and global_ok:
-                keep[endpoint_id].add(d)
-
-    return keep
-
-
-def _junction_expand_internal_dirs(
-    net,
-    original,
-    mapped_results,
-    max_hops: int,
-    axis_thresh_deg: float,
-):
-    """Core-pair boundary expansion.
-
-    - Use the first two mapped intersections in input order as core cameras.
-    - Run graph-based internal detection on core cameras (preserves 2-camera behavior).
-    - For each extra connected camera, remove only one inward-facing direction
-      (the direction whose source bearing points most toward the core centroid).
-    """
-    matched = [r for r in mapped_results if r["status"] == "matched"]
-    by_id = {r["intersection_id"]: r for r in matched}
-    internal = {r["intersection_id"]: set() for r in matched}
-
-    core_ids = []
-    for inter in original.get("intersections", []):
-        iid = inter["intersection_id"]
-        if iid in by_id:
-            core_ids.append(iid)
-        if len(core_ids) >= 2:
-            break
-    if len(core_ids) < 2:
-        return identify_internal_inflows(net, mapped_results, max_hops=max_hops, axis_thresh_deg=axis_thresh_deg)
-
-    core_rows = [by_id[iid] for iid in core_ids]
-    core_internal = identify_internal_inflows(net, core_rows, max_hops=max_hops, axis_thresh_deg=axis_thresh_deg)
-    for iid, dirs in core_internal.items():
-        internal[iid].update(dirs)
-
-    source_edges = {iid: {info["edge_id"] for info in by_id[iid]["approaches"].values()} for iid in core_ids}
-    core_xy = [net.getNode(by_id[iid]["matched_node_id"]).getCoord() for iid in core_ids]
-    cx = sum(x for x, _ in core_xy) / len(core_xy)
-    cy = sum(y for _, y in core_xy) / len(core_xy)
-
-    core_axis = _bearing_between(core_xy[0], core_xy[1]) if len(core_xy) >= 2 else None
-
-    for row in matched:
-        iid = row["intersection_id"]
-        if iid in core_ids:
-            continue
-        rxy = net.getNode(row["matched_node_id"]).getCoord()
-        inbound = _bearing_between(rxy, (cx, cy))
-
-        # Only expand through cameras that are corridor-connected to core set.
-        connected = False
-        for cid in core_ids:
-            for te in {info["edge_id"] for info in row["approaches"].values()}:
-                hops = _min_hops_from_sources_to_target(
-                    net,
-                    source_edges[cid],
-                    te,
-                    max_hops=max_hops,
-                    corridor_axis_bearing=core_axis,
-                    axis_thresh_deg=axis_thresh_deg,
-                )
-                if hops is not None:
-                    connected = True
-                    break
-            if connected:
-                break
-        if not connected:
-            continue
-
-        cands = []
-        for d, info in row["approaches"].items():
-            src = (info["heading"] + 180.0) % 360.0
-            cands.append((_angle_diff(src, inbound), d))
-        if not cands:
-            continue
-        cands.sort(key=lambda z: z[0])
-        # Remove at most one inward-facing direction for each extra camera.
-        if cands[0][0] <= 75.0:
-            internal[iid].add(cands[0][1])
+            upstream_node_id = _first_upstream_major_junction(
+                net,
+                info["edge_id"],
+                r["matched_node_id"],
+                max_hops=max_hops,
+                direction_thresh_deg=min(axis_thresh_deg, 35.0),
+            )
+            if upstream_node_id in camera_by_node:
+                internal[iid].add(d)
 
     return internal
 
@@ -593,93 +308,15 @@ def build_boundary_json(
     boundary_mode: str,
     branch_flow_scale: float,
 ):
-    ordered_ids = [inter["intersection_id"] for inter in original.get("intersections", [])]
+    # Kept only so older scripts with these arguments still run.
+    _ = (boundary_mode, branch_flow_scale)
     mapped_by_id = {r["intersection_id"]: r for r in mapped_results}
-
-    extra_removed_dirs: dict[str, set[str]] = {}
-    branch_scaled_ids: set[str] = set()
-    if boundary_mode == "junction_expand":
-        core_ids = [iid for iid in ordered_ids[:2] if iid in mapped_by_id and mapped_by_id[iid]["status"] == "matched"]
-        if len(core_ids) == 2:
-            c1 = net.getNode(mapped_by_id[core_ids[0]]["matched_node_id"]).getCoord()
-            c2 = net.getNode(mapped_by_id[core_ids[1]]["matched_node_id"]).getCoord()
-            vx, vy = c2[0] - c1[0], c2[1] - c1[1]
-            vnorm = math.hypot(vx, vy)
-            if vnorm > 1e-6:
-                ux, uy = vx / vnorm, vy / vnorm
-
-                def dist_to_core_line(pxy):
-                    wx, wy = pxy[0] - c1[0], pxy[1] - c1[1]
-                    proj = wx * ux + wy * uy
-                    px, py = c1[0] + proj * ux, c1[1] + proj * uy
-                    return math.hypot(pxy[0] - px, pxy[1] - py)
-
-                lateral_dist_thresh_m = 60.0
-                for iid in ordered_ids[2:]:
-                    row = mapped_by_id.get(iid)
-                    if not row or row["status"] != "matched":
-                        continue
-                    rxy = net.getNode(row["matched_node_id"]).getCoord()
-                    if dist_to_core_line(rxy) <= lateral_dist_thresh_m:
-                        continue
-                    branch_scaled_ids.add(iid)
-
-                    # Branch camera: remove one direction that points toward nearest core camera.
-                    nearest_core = min(
-                        core_ids,
-                        key=lambda cid: math.dist(rxy, net.getNode(mapped_by_id[cid]["matched_node_id"]).getCoord()),
-                    )
-                    core_xy = net.getNode(mapped_by_id[nearest_core]["matched_node_id"]).getCoord()
-                    b_to_core = _bearing_between(rxy, core_xy)
-                    cands = [
-                        (_angle_diff(info["heading"], b_to_core), d)
-                        for d, info in row["approaches"].items()
-                    ]
-                    if cands:
-                        cands.sort(key=lambda z: z[0])
-                        extra_removed_dirs.setdefault(iid, set()).add(cands[0][1])
-
-                    # Core camera: symmetrically remove one direction that points toward branch camera.
-                    core_row = mapped_by_id[nearest_core]
-                    b_to_branch = _bearing_between(core_xy, rxy)
-                    cands_core = [
-                        (_angle_diff(info["heading"], b_to_branch), d)
-                        for d, info in core_row["approaches"].items()
-                    ]
-                    if cands_core:
-                        cands_core.sort(key=lambda z: z[0])
-                        extra_removed_dirs.setdefault(nearest_core, set()).add(cands_core[0][1])
-
-    if boundary_mode == "junction_order":
-        keep_dirs = _junction_order_boundary_dirs(
-            net,
-            mapped_results,
-            max_hops=internal_max_hops,
-            axis_thresh_deg=internal_axis_thresh_deg,
-        )
-        internal_dirs = {}
-        for r in mapped_results:
-            if r["status"] != "matched":
-                continue
-            iid = r["intersection_id"]
-            all_dirs = set(r["approaches"].keys())
-            internal_dirs[iid] = all_dirs - keep_dirs.get(iid, set())
-    elif boundary_mode == "junction_expand":
-        # Expansion mode (strict topology):
-        # use full graph internal detection to preserve global consistency.
-        internal_dirs = identify_internal_inflows(
-            net,
-            mapped_results,
-            max_hops=internal_max_hops,
-            axis_thresh_deg=internal_axis_thresh_deg,
-        )
-    else:
-        internal_dirs = identify_internal_inflows(
-            net,
-            mapped_results,
-            max_hops=internal_max_hops,
-            axis_thresh_deg=internal_axis_thresh_deg,
-        )
+    internal_dirs = identify_internal_inflows(
+        net,
+        mapped_results,
+        max_hops=internal_max_hops,
+        axis_thresh_deg=internal_axis_thresh_deg,
+    )
     out = {
         "schema_version": original.get("schema_version", "1.0"),
         "corridor_id": original.get("corridor_id"),
@@ -688,8 +325,8 @@ def build_boundary_json(
         "window": original.get("window"),
         "intersections": [],
         "injection_strategy": {
-            "type": "auto_boundary_from_mapped_graph",
-            "notes": "Keep only boundary inflow directions; internal linked inflows are removed.",
+            "type": "directed_upstream_first_major_junction",
+            "notes": "A direction is internal only when its first upstream major junction is also covered by a camera.",
             "removed_internal_directions": {},
             "dropped_unmapped_or_unusable_directions": {},
         },
@@ -713,16 +350,11 @@ def build_boundary_json(
             if d not in approach_dirs:
                 dropped_unusable.append(d)
                 continue
-            if d in extra_removed_dirs.get(iid, set()):
-                removed_internal.append(d)
-                continue
             if d in internal_dirs.get(iid, set()):
                 removed_internal.append(d)
                 continue
             moves = mapped["approaches"][d]["movements"]
             cleaned = {t: float(turn_counts.get(t, 0.0)) for t in TURNS if t in moves and float(turn_counts.get(t, 0.0)) > 0}
-            if cleaned and iid in branch_scaled_ids:
-                cleaned = {t: v * branch_flow_scale for t, v in cleaned.items()}
             if cleaned:
                 kept[d] = cleaned
 
@@ -1087,6 +719,7 @@ def write_deterministic_routes(
     })
 
     flow_count = 0
+    emitted_vehph = 0.0
     start_edge_counts: dict[str, int] = {}
     for i, p in enumerate(patterns):
         scaled = p.vehs_per_hour * flow_scale
@@ -1101,6 +734,7 @@ def write_deterministic_routes(
         edges = _sanitize_connected_route(edges, net)
         if len(edges) < 2:
             continue
+        scaled_text = f"{scaled:.2f}"
         ET.SubElement(root, "route", {"id": rid, "edges": " ".join(edges)})
         start_edge_counts[edges[0]] = start_edge_counts.get(edges[0], 0) + 1
         ET.SubElement(root, "flow", {
@@ -1108,121 +742,42 @@ def write_deterministic_routes(
             "type": "car_normal",
             "begin": "0",
             "end": str(sim_end),
-            "vehsPerHour": f"{scaled:.2f}",
+            "vehsPerHour": scaled_text,
             "route": rid,
             "departLane": "best",
             "departSpeed": "max",
         })
         flow_count += 1
+        emitted_vehph += float(scaled_text)
 
     route_out.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(route_out, encoding="utf-8", xml_declaration=True)
-    return flow_count, start_edge_counts
-
-
-def run_sumo(net_file: Path, tls_file: Path, route_file: Path, sim_end: int, tripinfo_out: Path, fcd_out: Path, stats_out: Path):
-    cmd = [
-        "sumo",
-        "-n",
-        str(net_file),
-        "-a",
-        str(tls_file),
-        "-r",
-        str(route_file),
-        "--begin",
-        "0",
-        "--end",
-        str(sim_end),
-        "--step-length",
-        "1",
-        "--no-step-log",
-        "true",
-        "--duration-log.statistics",
-        "true",
-        "--tripinfo-output",
-        str(tripinfo_out),
-        "--fcd-output",
-        str(fcd_out),
-        "--statistic-output",
-        str(stats_out),
-    ]
-    return subprocess.run(cmd, check=False, capture_output=True, text=True)
-
-
-def analyze_vehicle_motion(fcd_path: Path, tripinfo_path: Path, stop_speed: float, stop_threshold_s: int):
-    arrived = set()
-    if tripinfo_path.exists():
-        tr = ET.parse(tripinfo_path).getroot()
-        for t in tr.findall("tripinfo"):
-            arrived.add(t.get("id"))
-
-    per = {}
-    # per[vid] = dict(last_t, last_stop, cur_stop, max_stop, seen_steps)
-    if not fcd_path.exists():
-        return {
-            "vehicle_seen": 0,
-            "arrived": 0,
-            "long_stop_vehicle_count": 0,
-            "long_stop_vehicle_ids": [],
-            "max_stop_seconds": 0,
-        }
-
-    for event, elem in ET.iterparse(fcd_path, events=("start", "end")):
-        if event == "end" and elem.tag == "timestep":
-            t = float(elem.attrib.get("time", "0"))
-            for v in elem.findall("vehicle"):
-                vid = v.get("id")
-                speed = float(v.get("speed", "0"))
-                st = per.setdefault(vid, {"last_t": t, "cur_stop": 0.0, "max_stop": 0.0, "seen_steps": 0})
-                dt = max(0.0, t - st["last_t"])
-                st["last_t"] = t
-                st["seen_steps"] += 1
-                if speed <= stop_speed:
-                    st["cur_stop"] += dt
-                    if st["cur_stop"] > st["max_stop"]:
-                        st["max_stop"] = st["cur_stop"]
-                else:
-                    st["cur_stop"] = 0.0
-            elem.clear()
-
-    long_ids = [vid for vid, st in per.items() if st["max_stop"] >= stop_threshold_s]
-    max_stop = max((st["max_stop"] for st in per.values()), default=0.0)
-
-    return {
-        "vehicle_seen": len(per),
-        "arrived": len(arrived),
-        "long_stop_vehicle_count": len(long_ids),
-        "long_stop_vehicle_ids": sorted(long_ids)[:50],
-        "max_stop_seconds": round(max_stop, 2),
-    }
+    return flow_count, emitted_vehph, start_edge_counts
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input-json", required=True)
     ap.add_argument("--net-file", required=True)
-    ap.add_argument("--tls-file", required=True)
     ap.add_argument("--boundary-json-out", required=True)
     ap.add_argument("--route-out", required=True)
-    ap.add_argument("--report-out", required=True)
     ap.add_argument("--patterns-out", required=True)
-    ap.add_argument("--tripinfo-out", required=True)
-    ap.add_argument("--fcd-out", required=True)
-    ap.add_argument("--statistic-out", required=True)
     ap.add_argument("--sim-end", type=int, default=1800)
     ap.add_argument("--max-match-distance-m", type=float, default=60.0)
     ap.add_argument("--max-corridor-hops", type=int, default=8)
     ap.add_argument("--internal-axis-thresh-deg", type=float, default=45.0)
-    ap.add_argument("--boundary-mode", choices=["graph", "junction_order", "junction_expand"], default="junction_expand")
-    ap.add_argument("--branch-flow-scale", type=float, default=0.35)
+    ap.add_argument(
+        "--boundary-mode",
+        default="directed_upstream_first_major_junction",
+        help="Deprecated compatibility option; the final pipeline always uses directed upstream major-junction detection.",
+    )
+    ap.add_argument("--branch-flow-scale", type=float, default=1.0, help="Deprecated compatibility option; encode branch scaling in the input JSON.")
     ap.add_argument("--exit-hops", type=int, default=3)
-    ap.add_argument("--flow-scale", type=float, default=0.35)
+    ap.add_argument("--flow-scale", type=float, default=1.0)
     ap.add_argument("--min-route-edges", type=int, default=5)
     ap.add_argument("--spawn-upstream-hops", type=int, default=2)
     ap.add_argument("--allow-uturn", action="store_true", default=True)
     ap.add_argument("--no-allow-uturn", action="store_false", dest="allow_uturn")
-    ap.add_argument("--stop-speed", type=float, default=0.1)
-    ap.add_argument("--stop-threshold-s", type=int, default=120)
     args = ap.parse_args()
 
     original = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
@@ -1261,7 +816,7 @@ def main():
         encoding="utf-8",
     )
 
-    flow_count, start_edge_counts = write_deterministic_routes(
+    flow_count, emitted_vehph, start_edge_counts = write_deterministic_routes(
         Path(args.route_out),
         patterns,
         net=net,
@@ -1272,55 +827,24 @@ def main():
         spawn_upstream_hops=args.spawn_upstream_hops,
     )
 
-    tripinfo_out = Path(args.tripinfo_out)
-    fcd_out = Path(args.fcd_out)
-    stats_out = Path(args.statistic_out)
-    tripinfo_out.parent.mkdir(parents=True, exist_ok=True)
-    fcd_out.parent.mkdir(parents=True, exist_ok=True)
-    stats_out.parent.mkdir(parents=True, exist_ok=True)
-
-    sim = run_sumo(
-        net_file=Path(args.net_file),
-        tls_file=Path(args.tls_file),
-        route_file=Path(args.route_out),
-        sim_end=args.sim_end,
-        tripinfo_out=tripinfo_out,
-        fcd_out=fcd_out,
-        stats_out=stats_out,
+    boundary_direction_count = sum(len(i.get("counts", {})) for i in boundary_json.get("intersections", []))
+    boundary_inflow_vehph = sum(
+        float(turns.get(t, 0.0))
+        for inter in boundary_json.get("intersections", [])
+        for turns in inter.get("counts", {}).values()
+        for t in TURNS
     )
-
-    motion = analyze_vehicle_motion(fcd_out, tripinfo_out, stop_speed=args.stop_speed, stop_threshold_s=args.stop_threshold_s)
-
-    report = {
-        "input_json": args.input_json,
-        "flow_scale": args.flow_scale,
-        "sim_end": args.sim_end,
-        "mapped_intersections": mapped,
-        "boundary_json_out": args.boundary_json_out,
-        "patterns_out": args.patterns_out,
-        "route_out": args.route_out,
-        "pattern_count": len(patterns),
-        "flow_count": flow_count,
-        "spawn_start_edge_counts": start_edge_counts,
-        "sumo_return_code": sim.returncode,
-        "allow_uturn": args.allow_uturn,
-        "sumo_stdout_tail": sim.stdout.splitlines()[-30:],
-        "sumo_stderr_tail": sim.stderr.splitlines()[-30:],
-        "vehicle_motion": motion,
-    }
-    Path(args.report_out).write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     print(json.dumps({
         "boundary_json_out": args.boundary_json_out,
         "patterns_out": args.patterns_out,
         "route_out": args.route_out,
-        "report_out": args.report_out,
+        "boundary_direction_count": boundary_direction_count,
+        "boundary_inflow_vehph": round(boundary_inflow_vehph, 4),
         "pattern_count": len(patterns),
         "flow_count": flow_count,
-        "sumo_return_code": sim.returncode,
-        "vehicle_seen": motion["vehicle_seen"],
-        "arrived": motion["arrived"],
-        "long_stop_vehicle_count": motion["long_stop_vehicle_count"],
+        "emitted_vehph": round(emitted_vehph, 4),
+        "spawn_start_edge_counts": start_edge_counts,
     }, indent=2))
 
 

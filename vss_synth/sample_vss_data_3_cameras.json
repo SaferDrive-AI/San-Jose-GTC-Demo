@@ -35,17 +35,6 @@
         "NB": { "left": 40, "through": 110, "right": 50 },
         "SB": { "left": 40, "through": 110, "right": 50 }
       }
-    },
-    {
-      "intersection_id": "camera_4",
-      "lat": 37.334569,
-      "lon": -121.891404,
-      "counts": {
-        "EB": { "left": 28.0, "through": 77.0, "right": 35.0 },
-        "WB": { "left": 28.0, "through": 77.0, "right": 35.0 },
-        "NB": { "left": 14.0, "through": 38.5, "right": 17.5 },
-        "SB": { "left": 14.0, "through": 38.5, "right": 17.5 }
-      }
     }
   ]
 }
