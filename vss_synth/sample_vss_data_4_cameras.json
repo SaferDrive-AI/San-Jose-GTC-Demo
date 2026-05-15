@@ -1,0 +1,51 @@
+{
+  "corridor_id": "santa_clara_st",
+  "observation_interval": "1h",
+  "timestamp_start": "2026-03-15T08:00:00",
+  "intersections": [
+    {
+      "intersection_id": "market_santa_clara",
+      "lat": 37.33548,
+      "lon": -121.89205,
+      "counts": {
+        "EB": { "left": 80, "through": 220, "right": 100 },
+        "WB": { "left": 80, "through": 220, "right": 100 },
+        "NB": { "left": 40, "through": 110, "right": 50 },
+        "SB": { "left": 40, "through": 110, "right": 50 }
+      }
+    },
+    {
+      "intersection_id": "1st_santa_clara",
+      "lat": 37.336169,
+      "lon": -121.890590,
+      "counts": {
+        "EB": { "left": 80, "through": 220, "right": 100 },
+        "WB": { "left": 80, "through": 220, "right": 100 },
+        "NB": { "left": 40, "through": 110, "right": 50 },
+        "SB": { "left": 40, "through": 110, "right": 50 }
+      }
+    },
+    {
+      "intersection_id": "camera_3",
+      "lat": 37.335075,
+      "lon": -121.892874,
+      "counts": {
+        "EB": { "left": 80, "through": 220, "right": 100 },
+        "WB": { "left": 80, "through": 220, "right": 100 },
+        "NB": { "left": 40, "through": 110, "right": 50 },
+        "SB": { "left": 40, "through": 110, "right": 50 }
+      }
+    },
+    {
+      "intersection_id": "camera_4",
+      "lat": 37.334569,
+      "lon": -121.891404,
+      "counts": {
+        "EB": { "left": 28.0, "through": 77.0, "right": 35.0 },
+        "WB": { "left": 28.0, "through": 77.0, "right": 35.0 },
+        "NB": { "left": 14.0, "through": 38.5, "right": 17.5 },
+        "SB": { "left": 14.0, "through": 38.5, "right": 17.5 }
+      }
+    }
+  ]
+}
