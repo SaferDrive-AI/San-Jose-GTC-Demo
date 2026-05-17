@@ -53,6 +53,25 @@ def classify_turn_by_angle(angle: float) -> str:
     return "through"
 
 
+def redistributed_turn_counts(turn_counts: dict, available_turns: set[str]) -> dict[str, float]:
+    """Preserve incoming volume while reallocating impossible turns to available turns."""
+    ordered_turns = [t for t in TURNS if t in available_turns]
+    total = sum(float(turn_counts.get(t, 0.0)) for t in TURNS)
+    if total <= 0.0 or not ordered_turns:
+        return {}
+
+    available_total = sum(float(turn_counts.get(t, 0.0)) for t in ordered_turns)
+    if available_total <= 0.0:
+        even_share = total / len(ordered_turns)
+        return {t: even_share for t in ordered_turns}
+
+    return {
+        t: total * float(turn_counts.get(t, 0.0)) / available_total
+        for t in ordered_turns
+        if float(turn_counts.get(t, 0.0)) > 0.0
+    }
+
+
 def edge_heading_into_node(edge) -> float:
     shape = edge.getShape()
     if len(shape) >= 2:
@@ -354,7 +373,7 @@ def build_boundary_json(
                 removed_internal.append(d)
                 continue
             moves = mapped["approaches"][d]["movements"]
-            cleaned = {t: float(turn_counts.get(t, 0.0)) for t in TURNS if t in moves and float(turn_counts.get(t, 0.0)) > 0}
+            cleaned = redistributed_turn_counts(turn_counts, set(moves))
             if cleaned:
                 kept[d] = cleaned
 
@@ -643,9 +662,11 @@ def enumerate_patterns(
     return patterns
 
 
-def build_patterns(net, boundary_json, mapped_results, max_corridor_hops: int, exit_hops: int, allow_uturn: bool):
+def build_patterns(net, boundary_json, mapped_results, original, max_corridor_hops: int, exit_hops: int, allow_uturn: bool):
     mapped_by_id = {r["intersection_id"]: r for r in mapped_results if r["status"] == "matched"}
-    counts_by_iid = {i["intersection_id"]: i.get("counts", {}) for i in boundary_json.get("intersections", [])}
+    # Boundary JSON decides where vehicles enter. Original VSS counts remain the TMR
+    # source for every camera that a deterministic route reaches downstream.
+    counts_by_iid = {i["intersection_id"]: i.get("counts", {}) for i in original.get("intersections", [])}
 
     approach_owner_by_edge = {}
     for iid, m in mapped_by_id.items():
@@ -799,6 +820,7 @@ def main():
         net=net,
         boundary_json=boundary_json,
         mapped_results=mapped,
+        original=original,
         max_corridor_hops=args.max_corridor_hops,
         exit_hops=args.exit_hops,
         allow_uturn=args.allow_uturn,

@@ -8,9 +8,9 @@
       "lat": 37.33548,
       "lon": -121.89205,
       "counts": {
-        "EB": { "left": 80, "through": 220, "right": 100 },
+        "EB": { "left": 120, "through": 220, "right": 100 },
         "WB": { "left": 80, "through": 220, "right": 100 },
-        "NB": { "left": 40, "through": 110, "right": 50  },
+        "NB": { "left": 90, "through": 110, "right": 50  },
         "SB": { "left": 40, "through": 110, "right": 50  }
       }
     },
@@ -19,9 +19,9 @@
       "lat": 37.336169,
       "lon": -121.890590,
       "counts": {
-        "EB": { "left": 80, "through": 220, "right": 100 },
+        "EB": { "left": 100, "through": 220, "right": 100 },
         "WB": { "left": 80, "through": 220, "right": 100 },
-        "NB": { "left": 40, "through": 110, "right": 50  },
+        "NB": { "left": 60, "through": 110, "right": 50  },
         "SB": { "left": 40, "through": 110, "right": 50  }
       }
     }
