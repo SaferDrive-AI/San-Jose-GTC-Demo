@@ -300,3 +300,35 @@ The `traffic_data_analysis/linkVision_rawData/` directory contains raw data from
 - [SUMO Documentation](https://sumo.dlr.de/docs/)
 - [TraCI Documentation](https://sumo.dlr.de/docs/TraCI.html)
 - [SUMO Traffic Light Control](https://sumo.dlr.de/docs/Simulation/Traffic_Lights.html)
+
+---
+
+## Branch `linker-vss` — Updates
+
+Work on this branch covers two integrations on top of `main`:
+
+### 1. LinkVision ↔ TeraSim pipeline (`linkvision_terasim/`)
+
+End-to-end pipeline that ingests LinkVision detection data and drives SUMO/TeraSim scenarios. Obstacle injection now goes through TeraSim's `StalledObjectAdversity` instead of ad-hoc TraCI calls, and the replay pipeline has module-level documentation across its modules and tests. Removed the forced view rotation on simulation start so the camera no longer snaps on launch.
+
+### 2. VSS synthesis pipeline (`vss_synth/`, `tools_vss_boundary_pipeline.py`)
+
+Generates SUMO route files from VSS (camera) detection JSON:
+
+- **Junction-chain boundary inference** — corridor flows are anchored on junction chains rather than single edges, so spawn/exit decisions stay stable across camera layouts.
+- **Dual-axis corridor BFS** — corridor expansion runs along both axes; spawn behavior is stabilized via upstream-hop search.
+- **2/3/4-camera regression harness** — covers the canonical camera counts; the 3-camera sample (`sample_vss_data_3_cameras.json`) replaces the older 4-camera sample as the default fixture.
+- **TMR (turn-movement ratio) redistribution fix** — turn ratios at boundary nodes are renormalized correctly when a movement is pruned.
+- **Vehicle type / shape injection** — `tools_inject_vehicle_types.py` rewrites a flat route file into a realistic vehicle mix (cars, trucks, buses, motorcycles) using `vss_synth/vehicle_types.xml`.
+- **GUI helper** — `bash vss_synth/run_vss_gui.sh` runs the full pipeline and launches `sumo-gui` against the downtown network. Outputs land in `outputs/vss_gui_*` (route, boundary, patterns).
+
+### New entry-point files
+
+| File | Description |
+|------|-------------|
+| `tools_vss_boundary_pipeline.py` | VSS JSON → SUMO routes, with junction-chain boundary inference and dual-axis corridor BFS |
+| `tools_inject_vehicle_types.py` | Injects a realistic vehicle-type mix into a generated route file |
+| `vss_synth/run_vss_gui.sh` | Convenience runner: pipeline + type injection + `sumo-gui` |
+| `vss_synth/sample_vss_data.json`, `sample_vss_data_3_cameras.json` | Sample VSS inputs (default + 3-camera) |
+| `vss_synth/vehicle_types.xml` | Vehicle-type definitions used by the injector |
+| `linkvision_terasim/` | LinkVision-driven TeraSim replay pipeline |
